@@ -11,6 +11,39 @@ const std = @import("std");
 // `s_block` is a local FP8 E4M3 scaling factor shared by a block of 16 consecutive elements,
 // `s_global` is a global FP32 scaling factor applied to the entire tensor.
 
+// Representations:
+// - NVFP4:
+//      1 sign bit
+//      2 exponent bits
+//      1 mantissa bit
+//
+// - FP8 E4M3:
+//      1 sign bit
+//      4 exponent bits
+//      3 mantissa bits
+
 pub fn main() !void {
-    std.debug.print("Hello, World !\n", .{});
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var write_buf: [4096]u8 = undefined;
+    var fw = std.Io.File.stdout().writer(io, &write_buf);
+    const w = &fw.interface;
+    defer w.flush() catch unreachable;
+    try w.print("Hello World\n", .{});
+
+    const filename = "converted/model-00001-of-00001.safetensors";
+    var file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
+    defer file.close(io);
+
+    var read_buf: [4096]u8 = undefined;
+    var f_reader: std.Io.File.Reader = file.reader(io, &read_buf);
+    const r = &f_reader.interface;
+    const n = try r.takeInt(u64, .little);
+    try w.print("N is {}\n", .{n});
 }
