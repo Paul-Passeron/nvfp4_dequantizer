@@ -122,6 +122,7 @@ fn fp8_e4m3_as_f16(x: u8) f16 {
 fn to_float(x_e2m1: u4, s_block: u8, s_global: u32) f16 {
     const x = @as(f32, e2m1_as_f16(x_e2m1));
     const s_b = @as(f32, fp8_e4m3_as_f16(s_block));
+    // TODO: Is that right in this case ?
     const s_g: f32 = @bitCast(s_global);
 
     return @as(f32, x * s_b * s_g);
