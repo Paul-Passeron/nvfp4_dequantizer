@@ -1,5 +1,6 @@
 const std = @import("std");
 const nvfp4 = @import("nvfp4");
+const st = @import("st");
 
 // Found the original NVIDIA paper at: <https://arxiv.org/pdf/2509.25149>
 
@@ -22,61 +23,6 @@ const nvfp4 = @import("nvfp4");
 //      1 sign bit
 //      4 exponent bits
 //      3 mantissa bits
-
-const DataType = enum { U8, U16, U32, U64, F8, F16, F32, F64, BF16, F8_E4M3 };
-
-const TensorInfo = struct {
-    dtype: DataType,
-    shape: []u64,
-    data_offsets: [2]usize,
-
-    const Self = @This();
-};
-
-const Tensor = struct {
-    name: []const u8,
-    info: TensorInfo,
-};
-
-const Metadata = struct {};
-
-const SafeTensorHeader = struct {
-    arena: std.heap.ArenaAllocator,
-
-    tensors: []Tensor,
-    metadata: Metadata,
-
-    const Self = @This();
-
-    fn deinit(self: *Self) void {
-        self.arena.deinit();
-    }
-
-    fn fromJSON(allocator: std.mem.Allocator, blob: []const u8) !Self {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        const a = arena.allocator();
-
-        const root = try std.json.parseFromSliceLeaky(std.json.Value, a, blob, .{
-            .allocate = .alloc_always,
-        });
-
-        var tensors: std.ArrayList(Tensor) = .empty;
-        var it = root.object.iterator();
-        while (it.next()) |entry| {
-            if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
-            try tensors.append(a, .{
-                .name = entry.key_ptr.*,
-                .info = try std.json.parseFromValueLeaky(TensorInfo, a, entry.value_ptr.*, .{}),
-            });
-        }
-
-        return .{
-            .tensors = try tensors.toOwnedSlice(a),
-            .metadata = .{},
-            .arena = arena,
-        };
-    }
-};
 
 const FOUR_KB = 4 * 1024;
 
@@ -106,10 +52,10 @@ pub fn main() !void {
     const json_blob = try f_reader.interface.readAlloc(allocator, n);
     defer allocator.free(json_blob);
 
-    var header = try SafeTensorHeader.fromJSON(allocator, json_blob);
+    var header = try st.SafeTensorHeader.fromJSON(allocator, json_blob);
     defer header.deinit();
 
-    const M = std.AutoHashMap(DataType, void);
+    const M = std.AutoHashMap(st.DataType, void);
     var m: M = .init(allocator);
     defer m.deinit();
 
