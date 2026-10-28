@@ -26,7 +26,7 @@ const DataType = enum { U8, U16, U32, U64, F8, F16, F32, F64, BF16, F8_E4M3 };
 
 const TensorInfo = struct {
     dtype: DataType,
-    shape: []u32,
+    shape: []u64,
     data_offsets: [2]usize,
 
     const Self = @This();
