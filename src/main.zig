@@ -79,6 +79,28 @@ const SafeTensorHeader = struct {
 
 const FOUR_KB = 4 * 1024;
 
+fn e2m1_as_f16(x: u4) f16 {
+    const sign: u16 = @as(u16, x >> 3) << 15;
+    const e: u16 = (x >> 1) & 0b11;
+    const m: u16 = x & 0b1;
+
+    var bits: u16 = sign;
+    if (e == 0) {
+        if (m == 1) bits |= 14 << 10;
+    } else {
+        bits |= ((e + 14) << 10) | (m << 9);
+    }
+    return @bitCast(bits);
+}
+
+fn to_float(x_e2m1: u4, s_block: u8, s_global: u32) f16 {
+    _ = x_e2m1; // autofix
+    _ = s_block; // autofix
+    _ = s_global; // autofix
+
+    @panic("TODO");
+}
+
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -105,7 +127,7 @@ pub fn main() !void {
     const json_blob = try f_reader.interface.readAlloc(allocator, n);
     defer allocator.free(json_blob);
 
-    const header = try SafeTensorHeader.fromJSON(allocator, json_blob);
+    var header = try SafeTensorHeader.fromJSON(allocator, json_blob);
     defer header.deinit();
 
     const M = std.AutoHashMap(DataType, void);
@@ -124,7 +146,7 @@ pub fn main() !void {
             const b = try r.takeByte();
             const lo: u4 = @intCast(b & 0b1111);
             const hi: u4 = @intCast(b >> 4 & 0b1111);
-            try w.print("{}: {} and {}\n", .{ b, lo, hi });
+            try w.print("{}: {} and {}\n", .{ b, e2m1_as_f16(lo), e2m1_as_f16(hi) });
         }
         break;
     }
