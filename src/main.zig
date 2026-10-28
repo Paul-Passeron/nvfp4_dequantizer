@@ -35,15 +35,33 @@ pub fn main() !void {
     var fw = std.Io.File.stdout().writer(io, &write_buf);
     const w = &fw.interface;
     defer w.flush() catch unreachable;
-    try w.print("Hello World\n", .{});
 
-    const filename = "converted/model-00001-of-00001.safetensors";
+    // const filename = "converted/model-00001-of-00001.safetensors";
+    const filename = "nvfp4/model.safetensors";
     var file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
     defer file.close(io);
-
     var read_buf: [4096]u8 = undefined;
     var f_reader: std.Io.File.Reader = file.reader(io, &read_buf);
     const r = &f_reader.interface;
+
     const n = try r.takeInt(u64, .little);
     try w.print("N is {}\n", .{n});
+
+    const json_blob = try r.readAlloc(allocator, n);
+    defer allocator.free(json_blob);
+    const json_data = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        json_blob,
+        .{},
+    );
+    defer json_data.deinit();
+    var obj: std.json.ObjectMap = undefined;
+    switch (json_data.value) {
+        .object => |object| {
+            obj = object;
+        },
+        else => unreachable,
+    }
+    try w.print("JSON Data:\n{any}\n", .{obj});
 }
