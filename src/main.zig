@@ -50,6 +50,31 @@ const SafeTensorHeader = struct {
     fn deinit(self: *const Self) void {
         self.arena.deinit();
     }
+
+    fn fromJSON(allocator: std.mem.Allocator, blob: []const u8) !Self {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        const a = arena.allocator();
+
+        const root = try std.json.parseFromSliceLeaky(std.json.Value, a, blob, .{
+            .allocate = .alloc_always,
+        });
+
+        var tensors: std.ArrayList(Tensor) = .empty;
+        var it = root.object.iterator();
+        while (it.next()) |entry| {
+            if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
+            try tensors.append(a, .{
+                .name = entry.key_ptr.*,
+                .info = try std.json.parseFromValueLeaky(TensorInfo, a, entry.value_ptr.*, .{}),
+            });
+        }
+
+        return .{
+            .tensors = try tensors.toOwnedSlice(a),
+            .metadata = .{},
+            .arena = arena,
+        };
+    }
 };
 
 pub fn main() !void {
@@ -95,28 +120,7 @@ pub fn main() !void {
     //     })});
     // }
 
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    const a = arena.allocator();
-
-    const root = try std.json.parseFromSliceLeaky(std.json.Value, a, json_blob, .{
-        .allocate = .alloc_always,
-    });
-
-    var tensors: std.ArrayList(Tensor) = .empty;
-    var it = root.object.iterator();
-    while (it.next()) |entry| {
-        if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
-        try tensors.append(a, .{
-            .name = entry.key_ptr.*,
-            .info = try std.json.parseFromValueLeaky(TensorInfo, a, entry.value_ptr.*, .{}),
-        });
-    }
-
-    const header: SafeTensorHeader = .{
-        .tensors = try tensors.toOwnedSlice(a),
-        .metadata = .{},
-        .arena = arena,
-    };
+    const header = try SafeTensorHeader.fromJSON(allocator, json_blob);
     defer header.deinit();
 
     try w.print("{any}\n", .{header});
