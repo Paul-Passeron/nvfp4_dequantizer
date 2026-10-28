@@ -1,2 +1,5 @@
 .zig-cache
 zig-out
+.venv
+nvfp4
+converted
