@@ -23,7 +23,7 @@ fn decodeE2M1_impl(x: u4) f16 {
 }
 
 fn create_decodeE2M1_table() [16]f32 {
-    var table: [16]f16 = undefined;
+    var table: [16]f32 = undefined;
     for (0..15) |i| {
         table[i] = decodeE2M1_impl(@as(u4, i));
     }
