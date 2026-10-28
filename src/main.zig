@@ -93,6 +93,12 @@ fn e2m1_as_f16(x: u4) f16 {
     return @bitCast(bits);
 }
 
+// fp8_e4m3:
+//
+// 07 06 05 04 03 02 01 00
+// --  ---------- --------
+// s       e         m
+
 fn to_float(x_e2m1: u4, s_block: u8, s_global: u32) f16 {
     _ = x_e2m1; // autofix
     _ = s_block; // autofix
