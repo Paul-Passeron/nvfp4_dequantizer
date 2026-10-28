@@ -103,27 +103,20 @@ pub fn main() !void {
 
     const json_blob = try r.readAlloc(allocator, n);
     defer allocator.free(json_blob);
-    // const json_data = try std.json.parseFromSlice(
-    //     std.json.Value,
-    //     allocator,
-    //     json_blob,
-    //     .{},
-    // );
-    // defer json_data.deinit();
-    // var obj: std.json.ObjectMap = json_data.value.object;
-    // var fit = obj.iterator();
-    // while (fit.next()) |entry| {
-    //     try w.print("Entry:\n", .{});
-    //     try w.print("    key = {s}\n", .{entry.key_ptr.*});
-    //     try w.print("    value = {f}\n", .{std.json.fmt(entry.value_ptr.*, .{
-    //         .whitespace = .indent_2,
-    //     })});
-    // }
 
     const header = try SafeTensorHeader.fromJSON(allocator, json_blob);
     defer header.deinit();
 
-    try w.print("{any}\n", .{header});
+    const M = std.AutoHashMap(DataType, void);
+    var m: M = .init(allocator);
+    defer m.deinit();
+
+    for (header.tensors) |t| {
+        if (!m.contains(t.info.dtype)) {
+            try m.put(t.info.dtype, {});
+            try w.print("{}\n", .{t.info.dtype});
+        }
+    }
 
     try w.flush();
 }
