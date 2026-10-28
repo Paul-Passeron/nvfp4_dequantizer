@@ -77,6 +77,8 @@ const SafeTensorHeader = struct {
     }
 };
 
+const FOUR_KB = 4 * 1024;
+
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -86,7 +88,7 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var write_buf: [4096]u8 = undefined;
+    var write_buf: [FOUR_KB]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &write_buf);
     const w = &fw.interface;
 
@@ -94,14 +96,13 @@ pub fn main() !void {
     const filename = "nvfp4/model.safetensors";
     var file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
     defer file.close(io);
-    var read_buf: [4096]u8 = undefined;
+    var read_buf: [FOUR_KB]u8 = undefined;
     var f_reader: std.Io.File.Reader = file.reader(io, &read_buf);
-    const r = &f_reader.interface;
 
-    const n = try r.takeInt(u64, .little);
+    const n = try f_reader.interface.takeInt(u64, .little);
     try w.print("N is {}\n", .{n});
 
-    const json_blob = try r.readAlloc(allocator, n);
+    const json_blob = try f_reader.interface.readAlloc(allocator, n);
     defer allocator.free(json_blob);
 
     const header = try SafeTensorHeader.fromJSON(allocator, json_blob);
@@ -111,11 +112,21 @@ pub fn main() !void {
     var m: M = .init(allocator);
     defer m.deinit();
 
-    for (header.tensors) |t| {
-        if (!m.contains(t.info.dtype)) {
-            try m.put(t.info.dtype, {});
-            try w.print("{}\n", .{t.info.dtype});
+    for (0.., header.tensors) |i, t| {
+        if (t.info.dtype != .U8) {
+            continue;
         }
+        try w.print("u8 at {}\n", .{i});
+        try f_reader.seekTo(t.info.data_offsets[0]);
+        const len = t.info.data_offsets[1] - t.info.data_offsets[0];
+        const r = &f_reader.interface;
+        for (0..len) |_| {
+            const b = try r.takeByte();
+            const lo: u4 = @intCast(b & 0b1111);
+            const hi: u4 = @intCast(b >> 4 & 0b1111);
+            try w.print("{}: {} and {}\n", .{ b, lo, hi });
+        }
+        break;
     }
 
     try w.flush();
