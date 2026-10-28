@@ -137,5 +137,14 @@ pub fn main() !void {
         }
     }
 
+    var out: [16]f32 = undefined;
+    const scale: u8 = 2;
+    const global: f32 = 1.0;
+    const bytes: [16]u4 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    nvfp4.dequantBlock(@ptrCast(&bytes), scale, global, &out);
+    for (out) |o| {
+        try w.print("{}, ", .{o});
+    }
+    try w.print("\n", .{});
     try w.flush();
 }

@@ -14,12 +14,12 @@ fn E2M1_from_parts(
     return bits;
 }
 
-fn decodeE2M1_impl(x: u4) f16 {
+fn decodeE2M1_impl(x: u4) f32 {
     const sign: u16 = @as(u16, x >> 3) << 15;
     const e: u16 = (x >> 1) & 0b11;
     const m: u16 = x & 0b1;
     const bits = E2M1_from_parts(sign, e, m);
-    return @bitCast(bits);
+    return @as(f32, @as(f16, @bitCast(bits)));
 }
 
 fn create_decodeE2M1_table() [16]f32 {
@@ -57,7 +57,7 @@ pub fn decodeE4M3(byte: u8) f32 {
     const e: u16 = @as(u16, byte >> 3) & 0b1111;
     const m: u16 = byte & 0b111;
     const bits = E4M3_from_parts(sign, e, m);
-    return @bitCast(bits);
+    return @as(f32, @as(f16, @bitCast(bits)));
 }
 
 pub fn unpack(byte: u8) [2]u4 {
@@ -72,13 +72,16 @@ pub fn dequantBlock(
     global: f32,
     out: *[16]f32,
 ) void {
-    // TODO: use SIMD to make it fast !
     const scale_f = global * decodeE4M3(scale);
+    const V = @Vector(16, f32);
+    const v: V = @splat(scale_f);
     for (0.., packed_bytes) |i, byte| {
         const lo, const hi = unpack(byte);
         const lo_f = decodeE2M1(lo);
         const hi_f = decodeE2M1(hi);
-        out[2 * i + 0] = lo_f * scale_f;
-        out[2 * i + 1] = hi_f * scale_f;
+        out[2 * i + 0] = lo_f;
+        out[2 * i + 1] = hi_f;
     }
+    const v2: V = out.*;
+    out.* = v * v2;
 }

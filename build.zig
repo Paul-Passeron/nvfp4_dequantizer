@@ -5,11 +5,17 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/nvfp4.zig"),
         .target = b.graph.host,
     });
-    const nvfp4_import: std.Build.Module.Import = .{ .module = nvfp4, .name = "nvfp4" };
+    const st = b.addModule("st", .{
+        .root_source_file = b.path("src/st.zig"),
+        .target = b.graph.host,
+    });
     const root_module = b.addModule("main", .{
         .root_source_file = b.path("src/main.zig"),
         .target = b.graph.host,
-        .imports = &.{nvfp4_import},
+        .imports = &.{
+            .{ .module = nvfp4, .name = "nvfp4" },
+            .{ .module = st, .name = "st" },
+        },
     });
     const exe = b.addExecutable(.{
         .name = "nvfp4",
