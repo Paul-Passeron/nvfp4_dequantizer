@@ -47,7 +47,7 @@ const SafeTensorHeader = struct {
 
     const Self = @This();
 
-    fn deinit(self: *const Self) void {
+    fn deinit(self: *Self) void {
         self.arena.deinit();
     }
 
