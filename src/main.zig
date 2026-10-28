@@ -79,7 +79,21 @@ const SafeTensorHeader = struct {
 
 const FOUR_KB = 4 * 1024;
 
+const e2m1_as_f16_table: [16]f16 = create_e2m1_as_f16_table();
+
+fn create_e2m1_as_f16_table() [16]f16 {
+    var table: [16]f16 = undefined;
+    for (0..15) |i| {
+        table[i] = e2m1_as_f16_impl(@as(u4, i));
+    }
+    return table;
+}
+
 fn e2m1_as_f16(x: u4) f16 {
+    return e2m1_as_f16_table[x];
+}
+
+fn e2m1_as_f16_impl(x: u4) f16 {
     const sign: u16 = @as(u16, x >> 3) << 15;
     const e: u16 = (x >> 1) & 0b11;
     const m: u16 = x & 0b1;
