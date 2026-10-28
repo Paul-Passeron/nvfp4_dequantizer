@@ -1,0 +1,7 @@
+.{
+    .name = .nvfp4_dequantizer,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.17.0",
+    .paths = .{""},
+    .fingerprint = 0xa52332d75678890,
+}
