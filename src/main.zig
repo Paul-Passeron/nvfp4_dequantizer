@@ -22,6 +22,25 @@ const std = @import("std");
 //      4 exponent bits
 //      3 mantissa bits
 
+const DataType = enum {
+    U8,
+    U16,
+    U32,
+    U64,
+
+    F8,
+    F16,
+    F32,
+    F64,
+};
+
+const TensorHeader = struct {
+    name: []const u8,
+    dtype: DataType,
+    shape: []u32,
+    offsets: [2]usize,
+};
+
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -34,7 +53,7 @@ pub fn main() !void {
     var write_buf: [4096]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &write_buf);
     const w = &fw.interface;
-    defer w.flush() catch unreachable;
+    defer w.flush() catch {};
 
     // const filename = "converted/model-00001-of-00001.safetensors";
     const filename = "nvfp4/model.safetensors";
@@ -56,12 +75,14 @@ pub fn main() !void {
         .{},
     );
     defer json_data.deinit();
-    var obj: std.json.ObjectMap = undefined;
-    switch (json_data.value) {
-        .object => |object| {
-            obj = object;
-        },
-        else => unreachable,
+    var obj: std.json.ObjectMap = json_data.value.object;
+
+    var it = obj.iterator();
+    while (it.next()) |entry| {
+        try w.print("Entry:\n", .{});
+        try w.print("    key = {s}\n", .{entry.key_ptr.*});
+        try w.print("    value = {f}\n", .{std.json.fmt(entry.value_ptr.*, .{
+            .whitespace = .indent_2,
+        })});
     }
-    try w.print("JSON Data:\n{any}\n", .{obj});
 }
