@@ -96,15 +96,35 @@ fn e2m1_as_f16(x: u4) f16 {
 // fp8_e4m3:
 //
 // 07 06 05 04 03 02 01 00
-// --  ---------- --------
+// -- ----------- --------
 // s       e         m
 
-fn to_float(x_e2m1: u4, s_block: u8, s_global: u32) f16 {
-    _ = x_e2m1; // autofix
-    _ = s_block; // autofix
-    _ = s_global; // autofix
+fn fp8_e4m3_as_f16(x: u8) f16 {
+    const sign: u16 = @as(u16, x >> 7) << 15;
+    const e: u16 = @as(u16, x >> 3) & 0b1111;
+    const m: u16 = x & 0b111;
 
-    @panic("TODO");
+    var bits: u16 = sign;
+    if (e == 0b1111 and m == 0b111) {
+        bits |= 0x7E00; // NaN
+    } else if (e == 0) {
+        if (m != 0) {
+            const p: u4 = @intCast(15 - @clz(m));
+            const frac = m & ((@as(u16, 1) << p) - 1);
+            bits |= ((@as(u16, p) + 6) << 10) | (frac << (10 - p));
+        }
+    } else {
+        bits |= ((e + 8) << 10) | (m << 7);
+    }
+    return @bitCast(bits);
+}
+
+fn to_float(x_e2m1: u4, s_block: u8, s_global: u32) f16 {
+    const x = @as(f32, e2m1_as_f16(x_e2m1));
+    const s_b = @as(f32, fp8_e4m3_as_f16(s_block));
+    const s_g: f32 = @bitCast(s_global);
+
+    return @as(f32, x * s_b * s_g);
 }
 
 pub fn main() !void {
