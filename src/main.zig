@@ -142,6 +142,12 @@ fn to_float(x_e2m1: u4, s_block: u8, s_global: u32) f16 {
     return @as(f32, x * s_b * s_g);
 }
 
+fn u8_to_u4s(b: u8) struct { u4, u4 } {
+    const lo: u4 = @intCast(b & 0b1111);
+    const hi: u4 = @intCast(b >> 4 & 0b1111);
+    return .{ lo, hi };
+}
+
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -176,6 +182,13 @@ pub fn main() !void {
     defer m.deinit();
 
     for (0.., header.tensors) |i, t| {
+        if (!std.mem.startsWith(u8, t.name, "model.layers.0.self_attn.q_proj")) {
+            continue;
+        }
+        try w.print("{s}: {}\n", .{ t.name, i });
+        // if (std.mem.endsWith(u8, t.name, "weight_packed")) {
+        //     try w.print("{s}: {}\n", .{ t.name, i });
+        // }
         if (t.info.dtype != .U8) {
             continue;
         }
@@ -185,11 +198,11 @@ pub fn main() !void {
         const r = &f_reader.interface;
         for (0..len) |_| {
             const b = try r.takeByte();
-            const lo: u4 = @intCast(b & 0b1111);
-            const hi: u4 = @intCast(b >> 4 & 0b1111);
-            try w.print("{}: {} and {}\n", .{ b, e2m1_as_f16(lo), e2m1_as_f16(hi) });
+            const lo, const hi = u8_to_u4s(b);
+            _ = lo;
+            _ = hi;
+            // try w.print("{}: {} and {}\n", .{ b, e2m1_as_f16(lo), e2m1_as_f16(hi) });
         }
-        break;
     }
 
     try w.flush();
