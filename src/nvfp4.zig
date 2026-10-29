@@ -219,10 +219,17 @@ pub const NVFP4Tensor = struct {
     }
 };
 
+const BLOCK_COUNT = 16;
+const PACKED_IN_BYTES = 2;
+const BLOCK_SIZE = BLOCK_COUNT / PACKED_IN_BYTES;
+
 /// Inspired by Std.Io.File.Reader
-const Reader = struct {
-    file: st.File,
+pub const Reader = struct {
+    blocks: NVFP4Tensor.BlockReader,
     interface: std.Io.Reader,
+
+    index_within_block: usize = @sizeOf([16]f32),
+    block: [16]f32 = undefined,
 
     const Self = @This();
 
@@ -241,11 +248,17 @@ const Reader = struct {
         self: *Self,
         w: *std.Io.Writer,
         limit: std.Io.Limit,
-    ) !usize {
-        _ = self;
-        _ = w;
-        _ = limit;
-        @panic("TODO");
+    ) std.Io.Reader.StreamError!usize {
+        const block_bytes: []u8 = std.mem.asBytes(&self.block);
+        if (self.index_within_block == block_bytes.len) {
+            if (!try self.blocks.next(&self.block))
+                return error.EndOfStream;
+            self.index_within_block = 0;
+        }
+        const slice = limit.slice(block_bytes[self.index_within_block..]);
+        const n = try w.write(slice);
+        self.index_within_block += n;
+        return n;
     }
 
     pub fn initInterface(buffer: []u8) std.Io.Reader {
@@ -257,9 +270,9 @@ const Reader = struct {
         };
     }
 
-    pub fn init(file: st.File, buffer: []u8) Reader {
+    pub fn init(blocks: NVFP4Tensor.BlockReader, buffer: []u8) Reader {
         return .{
-            .file = file,
+            .blocks = blocks,
             .interface = initInterface(buffer),
         };
     }
