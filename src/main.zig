@@ -91,7 +91,7 @@ pub fn main() !void {
     const scale: u8 = 2;
     const global: f32 = 1.0;
     const bytes = [8]u8{ 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE };
-    nvfp4.dequantBlock(@ptrCast(&bytes), scale, global, &out);
+    nvfp4.dequantBlock(&bytes, scale, global, &out);
     for (out) |o| {
         try w.print("{}, ", .{o});
     }
