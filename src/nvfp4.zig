@@ -24,8 +24,8 @@ fn decodeE2M1_impl(x: u4) f32 {
 
 fn create_decodeE2M1_table() [16]f32 {
     var table: [16]f32 = undefined;
-    for (0..16) |i| {
-        table[i] = decodeE2M1_impl(@as(u4, i));
+    for (&table, 0..) |*v, i| {
+        v.* = decodeE2M1_impl(@as(u4, i));
     }
     return table;
 }
