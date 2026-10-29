@@ -91,7 +91,7 @@ pub fn main() !void {
     const block_scales = try f.readBytes(allocator, weight_scale);
     defer allocator.free(block_scales);
     const global_scale_array = try f.readBytes(allocator, weight_global_scale);
-    const global_scale: f32 = (@as(*const f32, @ptrCast(@alignCast(global_scale_array.ptr)))).*;
+    const global_scale: f32 = @bitCast(std.mem.readInt(u32, global_scale_array[0..4], .little));
     allocator.free(global_scale_array);
 
     const tensors = try f.readBytes(allocator, weight_packed);
@@ -100,10 +100,8 @@ pub fn main() !void {
     var out: [16]f32 = undefined;
     for (0..block_size, block_scales) |i, scale| {
         // TODO: This is not fast (kind of on purpose)
-        const start = i * 8;
-        const end = (i + 1) * 8;
-        const bytes = &tensors[start..end];
-        nvfp4.dequantBlock(@ptrCast(bytes), scale, global_scale, &out);
+        const bytes = tensors[i * 8 ..][0..8];
+        nvfp4.dequantBlock(bytes, scale, global_scale, &out);
         for (out) |v| {
             try w.print("{} ", .{v});
         }
