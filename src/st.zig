@@ -98,13 +98,20 @@ pub const File = struct {
         allocator: std.mem.Allocator,
         path: []const u8,
     ) !Self {
-        var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
+        var file = try std.Io.Dir.cwd().openFile(io, path, .{
+            .mode = .read_only,
+        });
+
         var read_buf: [READ_BUFFER_CAP]u8 = undefined;
         var reader: std.Io.File.Reader = file.reader(io, &read_buf);
+
         const n = try reader.interface.takeInt(u64, .little);
+
         const json_blob = try reader.interface.readAlloc(allocator, n);
         defer allocator.free(json_blob);
+
         const header = try SafeTensorHeader.fromJSON(allocator, json_blob);
+        
         return .{ .header = header, .io = io, .file = file, .n = n };
     }
 
@@ -130,9 +137,12 @@ pub const File = struct {
 
     pub fn readBytes(self: *const Self, a: std.mem.Allocator, info: *const TensorInfo) ![]u8 {
         var read_buf: [READ_BUFFER_CAP]u8 = undefined;
+
         var reader: std.Io.File.Reader = self.file.reader(self.io, &read_buf);
         try reader.seekTo(self.header_offset_bytes() + info.offset);
+
         const res = try reader.interface.readAllocAll(a, info.byte_len);
+
         return res;
     }
 
@@ -140,15 +150,17 @@ pub const File = struct {
         // TODO: not sure this is even REMOTELY correct ^^'
         var read_buf: [@sizeOf(T)]u8 = undefined;
         var bytes: [@sizeOf(T)]u8 = undefined;
+
         var reader: std.Io.File.Reader = self.file.reader(self.io, &read_buf);
         try reader.seekTo(self.header_offset_bytes() + info.offset);
+
         try reader.interface.readSliceAll(&bytes);
-        const res: T = @bitCast(std.mem.readInt(
+
+        return @bitCast(std.mem.readInt(
             @Int(.unsigned, @bitSizeOf(T)),
             &bytes,
             .little,
         ));
-        return res;
     }
 
     pub const Iterator = struct {
@@ -213,14 +225,19 @@ pub const File = struct {
 
         pub fn reader(self: *NVFP4Layer, allocator: std.mem.Allocator) !BlockReader {
             const global_scale = try self.getGlobalScale();
+
             const block_scale_buffer: []u8 = try allocator.alloc(u8, READ_BUFFER_CAP);
             errdefer allocator.free(block_scale_buffer);
+
             const packed_scale_buffer: []u8 = try allocator.alloc(u8, READ_BUFFER_CAP);
             errdefer allocator.free(packed_scale_buffer);
+
             var block_scale_reader = self.f.file.reader(self.f.io, block_scale_buffer);
             try block_scale_reader.seekTo(self.f.header_offset_bytes() + self.weight_scale.offset);
+
             var packed_scale_reader = self.f.file.reader(self.f.io, packed_scale_buffer);
             try packed_scale_reader.seekTo(self.f.header_offset_bytes() + self.weight_packed.offset);
+
             return .{
                 .global_scale = global_scale,
                 .block_scale_reader = block_scale_reader,
