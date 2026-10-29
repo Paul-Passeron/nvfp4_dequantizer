@@ -59,7 +59,7 @@ pub fn main() !void {
     var m: M = .init(allocator);
     defer m.deinit();
 
-    for (0.., header.tensors) |i, t| {
+    for (0.., header.tensors, header.offsets) |i, t, offset| {
         if (!std.mem.startsWith(u8, t.name, "model.layers.0.self_attn.q_proj")) {
             continue;
         }
@@ -67,14 +67,13 @@ pub fn main() !void {
         // if (std.mem.endsWith(u8, t.name, "weight_packed")) {
         //     try w.print("{s}: {}\n", .{ t.name, i });
         // }
-        if (t.info.dtype != .U8) {
+        if (t.dtype != .U8) {
             continue;
         }
         try w.print("u8 at {}\n", .{i});
-        try f_reader.seekTo(t.info.data_offsets[0]);
-        const len = t.info.data_offsets[1] - t.info.data_offsets[0];
+        try f_reader.seekTo(offset);
         const r = &f_reader.interface;
-        for (0..len) |_| {
+        for (0..t.byte_len) |_| {
             const b = try r.takeByte();
             const lo, const hi = nvfp4.unpack(b);
             const lo_f = nvfp4.decodeE2M1(lo);
@@ -86,7 +85,7 @@ pub fn main() !void {
     var out: [16]f32 = undefined;
     const scale: u8 = 2;
     const global: f32 = 1.0;
-    const bytes: [16]u4 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    const bytes = [8]u8{ 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE };
     nvfp4.dequantBlock(@ptrCast(&bytes), scale, global, &out);
     for (out) |o| {
         try w.print("{}, ", .{o});

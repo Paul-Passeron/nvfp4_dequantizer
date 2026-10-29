@@ -18,13 +18,13 @@ pub const RawTensor = struct {
     pub fn into_tensorInfo(self: @This()) struct { info: TensorInfo, offset: usize } {
         const offset = self.info.data_offsets[0];
         const byte_len = self.info.data_offsets[1] - offset;
-        const res = .{
+        const res: TensorInfo = .{
             .name = self.name,
-            .dtype = self.dtype,
-            .shape = self.shape,
+            .dtype = self.info.dtype,
+            .shape = self.info.shape,
             .byte_len = byte_len,
         };
-        return res;
+        return .{ .info = res, .offset = offset };
     }
 };
 
@@ -41,6 +41,7 @@ pub const SafeTensorHeader = struct {
     arena: std.heap.ArenaAllocator,
 
     tensors: []TensorInfo,
+    offsets: []usize,
     metadata: Metadata,
 
     const Self = @This();
@@ -57,18 +58,23 @@ pub const SafeTensorHeader = struct {
             .allocate = .alloc_always,
         });
 
-        var tensors: std.ArrayList(RawTensor) = .empty;
+        var tensors: std.ArrayList(TensorInfo) = .empty;
+        var offsets: std.ArrayList(usize) = .empty;
         var it = root.object.iterator();
         while (it.next()) |entry| {
             if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
-            try tensors.append(a, .{
+            const raw: RawTensor = .{
                 .name = entry.key_ptr.*,
                 .info = try std.json.parseFromValueLeaky(RawTensorInfo, a, entry.value_ptr.*, .{}),
-            });
+            };
+            const info = raw.into_tensorInfo();
+            try tensors.append(a, info.info);
+            try offsets.append(a, info.offset);
         }
 
         return .{
             .tensors = try tensors.toOwnedSlice(a),
+            .offsets = try offsets.toOwnedSlice(a),
             .metadata = .{},
             .arena = arena,
         };
