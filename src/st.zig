@@ -15,16 +15,16 @@ pub const RawTensor = struct {
     info: RawTensorInfo,
 
     /// Takes ownership of the values inside the tensor.
-    pub fn into_tensorInfo(self: @This()) struct { info: TensorInfo, offset: usize } {
+    pub fn into_tensorInfo(self: @This()) TensorInfo {
         const offset = self.info.data_offsets[0];
         const byte_len = self.info.data_offsets[1] - offset;
-        const res: TensorInfo = .{
+        return .{
             .name = self.name,
             .dtype = self.info.dtype,
             .shape = self.info.shape,
             .byte_len = byte_len,
+            .offset = offset,
         };
-        return .{ .info = res, .offset = offset };
     }
 };
 
@@ -32,6 +32,7 @@ pub const TensorInfo = struct {
     name: []const u8,
     dtype: DataType,
     shape: []u64,
+    offset: usize,
     byte_len: usize,
 };
 
@@ -41,7 +42,6 @@ pub const SafeTensorHeader = struct {
     arena: std.heap.ArenaAllocator,
 
     tensors: []TensorInfo,
-    offsets: []usize,
     metadata: Metadata,
 
     const Self = @This();
@@ -55,12 +55,14 @@ pub const SafeTensorHeader = struct {
         errdefer arena.deinit();
         const a = arena.allocator();
 
-        const root = try std.json.parseFromSliceLeaky(std.json.Value, a, blob, .{
-            .allocate = .alloc_always,
-        });
+        const root = try std.json.parseFromSliceLeaky(
+            std.json.Value,
+            a,
+            blob,
+            .{ .allocate = .alloc_always },
+        );
 
         var tensors: std.ArrayList(TensorInfo) = .empty;
-        var offsets: std.ArrayList(usize) = .empty;
         var it = root.object.iterator();
         while (it.next()) |entry| {
             if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
@@ -69,13 +71,11 @@ pub const SafeTensorHeader = struct {
                 .info = try std.json.parseFromValueLeaky(RawTensorInfo, a, entry.value_ptr.*, .{}),
             };
             const info = raw.into_tensorInfo();
-            try tensors.append(a, info.info);
-            try offsets.append(a, info.offset);
+            try tensors.append(a, info);
         }
 
         return .{
             .tensors = try tensors.toOwnedSlice(a),
-            .offsets = try offsets.toOwnedSlice(a),
             .metadata = .{},
             .arena = arena,
         };
@@ -119,5 +119,36 @@ pub const File = struct {
         return self.header.tensors.len + 8;
     }
 
-    const TensorInfoIterator = struct {};
+    pub fn iterator(self: *const Self) Iterator {
+        return .{
+            .index = 0,
+            .f = self,
+        };
+    }
+
+    pub fn readBytes(self: *const Self, a: std.mem.Allocator, info: TensorInfo) ![]u8 {
+        var read_buf: [READ_BUFFER_CAP]u8 = undefined;
+        var reader: std.Io.File.Reader = self.file.reader(self.io, &read_buf);
+        try reader.seekTo(self.header_offset_bytes() + info.offset);
+        const res = try reader.interface.readAllocAll(a, info.byte_len);
+        return res;
+    }
+
+    pub const Iterator = struct {
+        index: usize,
+        f: *const File,
+
+        pub fn next(self: *@This()) ?TensorInfo {
+            if (self.f.header.tensors.len <= self.index) {
+                return null;
+            }
+            const info = self.f.header.tensors[self.index];
+            self.index += 1;
+            return info;
+        }
+
+        pub fn reset(self: *@This()) void {
+            self.index = 0;
+        }
+    };
 };

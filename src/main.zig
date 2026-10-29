@@ -43,46 +43,23 @@ pub fn main() !void {
     const filename = "nvfp4/model.safetensors";
     var f = try st.File.open(io, allocator, filename);
     defer f.close();
-    //     var file = try std.Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_only });
-    //     defer file.close(io);
-    //     var read_buf: [FOUR_KB]u8 = undefined;
-    //     var f_reader: std.Io.File.Reader = file.reader(io, &read_buf);
-    //
-    //     const n = try f_reader.interface.takeInt(u64, .little);
-    //     try w.print("N is {}\n", .{n});
-    //
-    //     const json_blob = try f_reader.interface.readAlloc(allocator, n);
-    //     defer allocator.free(json_blob);
-    //
-    //     var header = try st.SafeTensorHeader.fromJSON(allocator, json_blob);
-    //     defer header.deinit();
-    //
-    //     const M = std.AutoHashMap(st.DataType, void);
-    //     var m: M = .init(allocator);
-    //     defer m.deinit();
 
-    // for (0.., .tensors, header.offsets) |i, t, offset| {
-    //     if (!std.mem.startsWith(u8, t.name, "model.layers.0.self_attn.q_proj")) {
-    //         continue;
-    //     }
-    //     try w.print("{s}: {}\n", .{ t.name, i });
-    //     // if (std.mem.endsWith(u8, t.name, "weight_packed")) {
-    //     //     try w.print("{s}: {}\n", .{ t.name, i });
-    //     // }
-    //     if (t.dtype != .U8) {
-    //         continue;
-    //     }
-    //     try w.print("u8 at {}\n", .{i});
-    //     try f_reader.seekTo(8 + n + offset);
-    //     const r = &f_reader.interface;
-    //     for (0..t.byte_len) |_| {
-    //         const b = try r.takeByte();
-    //         const lo, const hi = nvfp4.unpack(b);
-    //         const lo_f = nvfp4.decodeE2M1(lo);
-    //         const hi_f = nvfp4.decodeE2M1(hi);
-    //         try w.print("{}: {} and {}\n", .{ b, lo_f, hi_f });
-    //     }
-    // }
+    var it = f.iterator();
+    while (it.next()) |t| {
+        if (!std.mem.startsWith(u8, t.name, "model.layers.0.self_attn.q_proj")) {
+            continue;
+        }
+        try w.print("{s}: {}\n", .{ t.name, t.byte_len });
+        const buffer = try f.readBytes(allocator, t);
+        defer allocator.free(buffer);
+
+        for (buffer) |b| {
+            const lo, const hi = nvfp4.unpack(b);
+            const lo_f = nvfp4.decodeE2M1(lo);
+            const hi_f = nvfp4.decodeE2M1(hi);
+            try w.print("{}: {} and {}\n", .{ b, lo_f, hi_f });
+        }
+    }
 
     var out: [16]f32 = undefined;
     const scale: u8 = 2;
