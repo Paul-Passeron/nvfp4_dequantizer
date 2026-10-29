@@ -136,6 +136,21 @@ pub const File = struct {
         return res;
     }
 
+    pub fn readScalar(self: *const Self, comptime T: type, info: *const TensorInfo) !T {
+        // TODO: not sure this is even REMOTELY correct ^^'
+        var read_buf: [@sizeOf(T)]u8 = undefined;
+        var bytes: [@sizeOf(T)]u8 = undefined;
+        var reader: std.Io.File.Reader = self.file.reader(self.io, &read_buf);
+        try reader.seekTo(self.header_offset_bytes() + info.offset);
+        try reader.interface.readSliceAll(&bytes);
+        const res: T = @bitCast(std.mem.readInt(
+            @Int(.unsigned, @bitSizeOf(T)),
+            &bytes,
+            .little,
+        ));
+        return res;
+    }
+
     pub const Iterator = struct {
         index: usize,
         f: *const File,
@@ -192,22 +207,12 @@ pub const File = struct {
             }
         };
 
-        fn getGlobalScale(self: *NVFP4Layer, allocator: std.mem.Allocator) !f32 {
-            const global_scale_array = try self.f.readBytes(
-                allocator,
-                self.weight_global_scale,
-            );
-            defer allocator.free(global_scale_array);
-            const global_scale: f32 = @bitCast(std.mem.readInt(
-                u32,
-                global_scale_array[0..4],
-                .little,
-            ));
-            return global_scale;
+        fn getGlobalScale(self: *NVFP4Layer) !f32 {
+            return self.f.readScalar(f32, self.weight_global_scale);
         }
 
         pub fn reader(self: *NVFP4Layer, allocator: std.mem.Allocator) !BlockReader {
-            const global_scale = try self.getGlobalScale(allocator);
+            const global_scale = try self.getGlobalScale();
             const block_scale_buffer: []u8 = try allocator.alloc(u8, READ_BUFFER_CAP);
             errdefer allocator.free(block_scale_buffer);
             const packed_scale_buffer: []u8 = try allocator.alloc(u8, READ_BUFFER_CAP);
