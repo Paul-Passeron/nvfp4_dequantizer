@@ -6,8 +6,6 @@ pub const RawTensorInfo = struct {
     dtype: DataType,
     shape: []u64,
     data_offsets: [2]usize,
-
-    const Self = @This();
 };
 
 pub const RawTensor = struct {
