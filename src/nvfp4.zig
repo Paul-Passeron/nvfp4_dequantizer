@@ -100,7 +100,7 @@ pub fn dequantBlock(
     global: f32,
     out: *[16]f32,
 ) void {
-    const scale_f = global * decodeE4M3(scale);
+    const scale_f = decodeE4M3(scale) / global;
     const V = @Vector(16, f32);
     const v: V = @splat(scale_f);
     for (0.., packed_bytes) |i, byte| {
@@ -111,7 +111,7 @@ pub fn dequantBlock(
         out[2 * i + 1] = hi_f;
     }
     const v2: V = out.*;
-    out.* = v * v2;
+    out.* = v2 * v;
 }
 
 /// View type over a `File` for a specific NVFP4 encoded layer
