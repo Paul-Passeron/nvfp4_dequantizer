@@ -1,7 +1,6 @@
 const std = @import("std");
 const nvfp4 = @import("nvfp4");
 const st = @import("st");
-
 const print = std.debug.print;
 
 pub fn main() !void {
@@ -13,7 +12,11 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var f = try st.File.open(io, allocator, "nvfp4/model.safetensors");
+    var f = try st.File.open(
+        io,
+        allocator,
+        "nvfp4/model.safetensors",
+    );
     defer f.close();
 
     var converted_f = try st.File.open(
@@ -28,19 +31,19 @@ pub fn main() !void {
         print("{s} {}\n", .{ val.name, val.dtype });
     }
 
-    var layer = try nvfp4.NVFP4Tensor.from(
+    var t = try nvfp4.NVFP4Tensor.from(
         &f,
         "model.layers.0.self_attn.q_proj",
     ) orelse return error.MissingLayer;
-    var reader = try layer.reader(allocator);
+    var reader = try t.reader(allocator);
     defer reader.deinit();
 
-    const t = (try converted_f.tensor(
+    const ct = (try converted_f.tensor(
         f32,
         "model.layers.0.self_attn.q_proj.weight",
     )) orelse return error.MissingLayer;
 
-    var c_reader = try t.reader(allocator);
+    var c_reader = try ct.reader(allocator);
     defer c_reader.deinit();
 
     var out: [16]f32 = undefined;
