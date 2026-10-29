@@ -1,6 +1,8 @@
 const std = @import("std");
 const nvfp4 = @import("nvfp4");
 const st = @import("st");
+const Io = std.Io;
+const Clock = Io.Clock;
 // const print = std.debug.print;
 
 test "nvfp4 and f32 are close enough" {
@@ -43,59 +45,40 @@ test "nvfp4 and f32 are close enough" {
     }
 }
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
+fn benchmark(
+    path: []const u8,
+    base: []const u8,
+    allocator: std.mem.Allocator,
+) !Io.Duration {
     var threaded: std.Io.Threaded = .init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
-    var f = try st.File.open(
-        io,
-        allocator,
-        "nvfp4/model.safetensors",
-    );
+    var f = try st.File.open(io, allocator, path);
     defer f.close();
 
-    var converted_f = try st.File.open(
-        io,
-        allocator,
-        "converted_f32/model-00001-of-00001.safetensors",
-    );
-    defer converted_f.close();
-
-    // var it = converted_f.iterator();
-    // while (it.next()) |val| {
-    //     print("{s} {}\n", .{ val.name, val.dtype });
-    // }
-
-    var t = try nvfp4.NVFP4Tensor.from(
-        &f,
-        "model.layers.0.self_attn.q_proj",
-    ) orelse return error.MissingLayer;
+    var t = try nvfp4.NVFP4Tensor.from(&f, base) orelse
+        return error.MissingLayer;
     var reader = try t.reader(allocator);
     defer reader.deinit();
 
-    const ct = (try converted_f.tensor(
-        f32,
-        "model.layers.0.self_attn.q_proj.weight",
-    )) orelse return error.MissingLayer;
-
-    var c_reader = try ct.reader(allocator);
-    defer c_reader.deinit();
-
     var out: [16]f32 = undefined;
-    var converted_out: [16]f32 = undefined;
 
-    while (try reader.next(&out)) {
-        for (&converted_out) |*cv| {
-            if (try c_reader.next()) |x| {
-                cv.* = x;
-            } else {
-                break;
-            }
-        }
+    const start = Clock.real.now(io);
+    {
+        while (try reader.next(&out)) {}
     }
+    const end = Clock.real.now(io);
+
+    return start.durationTo(end);
+}
+
+pub fn main() !void {
+    const allocator = std.heap.c_allocator;
+    const duration = try benchmark(
+        "nvfp4/model.safetensors",
+        "model.layers.0.self_attn.q_proj",
+        allocator,
+    );
+    std.debug.print("Took {f}\n", .{duration});
 }
