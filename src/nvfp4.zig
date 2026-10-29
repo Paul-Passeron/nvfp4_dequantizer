@@ -98,10 +98,10 @@ pub fn unpack(byte: u8) [2]u4 {
 pub fn dequantBlock(
     packed_bytes: *const [8]u8,
     scale: u8,
-    global: f32,
+    inv_global: f32,
     out: *[16]f32,
 ) void {
-    const scale_f = decodeE4M3(scale) / global;
+    const scale_f = decodeE4M3(scale) * inv_global;
     const V = @Vector(16, f32);
     const v: V = @splat(scale_f);
     for (0.., packed_bytes) |i, byte| {
@@ -148,7 +148,7 @@ pub const NVFP4Tensor = struct {
             var bytes: [8]u8 = undefined;
             try self.packed_reader.interface.readSliceAll(&bytes);
             const scale = try self.block_scale_reader.interface.takeByte();
-            dequantBlock(&bytes, scale, self.global_scale, out);
+            dequantBlock(&bytes, scale, 1.0 / self.global_scale, out);
             return true;
         }
     };
@@ -242,7 +242,12 @@ pub fn dequantRange(
             @panic("Invalid dequant range input");
         }
     }
-    _ = inv_global;
+    // Dumb way for the moment, using what we already have
+    for (scales, 0..) |scale, i| {
+        const bytes_slice = packed_bytes[i * 8 ..][0..8];
+        const out_slice = out[i * 16 ..][0..16];
+        dequantBlock(bytes_slice, scale, inv_global, out_slice);
+    }
 }
 
 const BLOCK_COUNT = 16;
