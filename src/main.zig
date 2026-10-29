@@ -73,6 +73,42 @@ fn benchmark(
     return start.durationTo(end);
 }
 
+fn nextFloat(reader: *std.Io.Reader) ?f32 {
+    const val = reader.takeInt(u32, .little) catch return null;
+    return @bitCast(val);
+}
+
+fn benchmark_with_reader(
+    path: []const u8,
+    base: []const u8,
+    allocator: std.mem.Allocator,
+) !Io.Duration {
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var f = try st.File.open(io, allocator, path);
+    defer f.close();
+
+    var t = try nvfp4.NVFP4Tensor.from(&f, base) orelse
+        return error.MissingLayer;
+    var blocks = try t.reader(allocator);
+    defer blocks.deinit();
+
+    const buffer = try allocator.alloc(u8, 4096);
+    defer allocator.free(buffer);
+
+    const start = Clock.real.now(io);
+    {
+        var reader = nvfp4.Reader.init(blocks, buffer);
+        const r = &reader.interface;
+        while (nextFloat(r)) |_| {}
+    }
+    const end = Clock.real.now(io);
+
+    return start.durationTo(end);
+}
+
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
     const duration = try benchmark(
@@ -80,5 +116,11 @@ pub fn main() !void {
         "model.layers.0.self_attn.q_proj",
         allocator,
     );
+    const reader_duration = try benchmark_with_reader(
+        "nvfp4/model.safetensors",
+        "model.layers.0.self_attn.q_proj",
+        allocator,
+    );
     std.debug.print("Took {f}\n", .{duration});
+    std.debug.print("Took {f}\n", .{reader_duration});
 }
