@@ -1,5 +1,6 @@
 const std = @import("std");
 const st = @import("st");
+const builtin = @import("builtin");
 
 // Found the original NVIDIA paper at: <https://arxiv.org/pdf/2509.25149>
 
@@ -218,6 +219,31 @@ pub const NVFP4Tensor = struct {
         };
     }
 };
+
+fn checkDequantRangeInput(
+    packed_bytes: []const u8,
+    scales: []const u8,
+    out: []f32,
+) bool {
+    if (packed_bytes.len % 8 != 0) return false;
+    if (packed_bytes.len / 8 != scales.len) return false;
+    if (out.len != scales.len * 16) return false;
+    return true;
+}
+
+pub fn dequantRange(
+    packed_bytes: []const u8,
+    scales: []const u8,
+    inv_global: f32,
+    out: []f32,
+) void {
+    if (builtin.mode == .debug) {
+        if (!checkDequantRangeInput(packed_bytes, scales, out)) {
+            @panic("Invalid dequant range input");
+        }
+    }
+    _ = inv_global;
+}
 
 const BLOCK_COUNT = 16;
 const PACKED_IN_BYTES = 2;
