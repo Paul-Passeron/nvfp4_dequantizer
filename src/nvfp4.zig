@@ -24,7 +24,7 @@ fn decodeE2M1_impl(x: u4) f32 {
 
 fn create_decodeE2M1_table() [16]f32 {
     var table: [16]f32 = undefined;
-    for (0..15) |i| {
+    for (0..16) |i| {
         table[i] = decodeE2M1_impl(@as(u4, i));
     }
     return table;
@@ -34,6 +34,11 @@ const decodeE2M1_table: [16]f32 = create_decodeE2M1_table();
 
 pub fn decodeE2M1(nibble: u4) f32 {
     return decodeE2M1_table[nibble];
+}
+
+test "decodeE2M1 covers all 16 values" {
+    const expected = [16]f32{ 0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6 };
+    for (expected, 0..) |e, i| try std.testing.expectEqual(e, decodeE2M1(@intCast(i)));
 }
 
 fn E4M3_from_parts(sign: u16, e: u16, m: u16) u16 {
