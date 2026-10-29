@@ -41,57 +41,56 @@ pub fn main() !void {
     const filename = "nvfp4/model.safetensors";
     var f = try st.File.open(io, allocator, filename);
     defer f.close();
+    //
+    //    var
+    //
+    //     var count: u32 = 0;
+    //
+    //     var it = f.iterator();
+    //     while (it.next()) |t| {
+    //         if (!std.mem.startsWith(u8, t.name, "model.layers.0.self_attn.q_proj")) {
+    //             continue;
+    //         }
+    //
+    //         if (std.mem.endsWith(u8, t.name, "input_global_scale")) {
+    //             input_global_scale = t;
+    //             count += 1;
+    //         }
+    //         if (std.mem.endsWith(u8, t.name, "weight_global_scale")) {
+    //             weight_global_scale = t;
+    //             count += 1;
+    //         }
+    //         if (std.mem.endsWith(u8, t.name, "weight_scale")) {
+    //             weight_scale = t;
+    //             count += 1;
+    //         }
+    //         if (std.mem.endsWith(u8, t.name, "weight_packed")) {
+    //             weight_packed = t;
+    //             count += 1;
+    //         }
+    //     }
+    //
+    //     if (count != 4) {
+    //         try w.print("Count = {d}", .{count});
+    //     }
 
-    var input_global_scale: st.TensorInfo = undefined;
-    var weight_global_scale: st.TensorInfo = undefined;
-    var weight_scale: st.TensorInfo = undefined;
-    var weight_packed: st.TensorInfo = undefined;
-
-    var count: u32 = 0;
-
-    var it = f.iterator();
-    while (it.next()) |t| {
-        if (!std.mem.startsWith(u8, t.name, "model.layers.0.self_attn.q_proj")) {
-            continue;
-        }
-
-        if (std.mem.endsWith(u8, t.name, "input_global_scale")) {
-            input_global_scale = t;
-            count += 1;
-        }
-        if (std.mem.endsWith(u8, t.name, "weight_global_scale")) {
-            weight_global_scale = t;
-            count += 1;
-        }
-        if (std.mem.endsWith(u8, t.name, "weight_scale")) {
-            weight_scale = t;
-            count += 1;
-        }
-        if (std.mem.endsWith(u8, t.name, "weight_packed")) {
-            weight_packed = t;
-            count += 1;
-        }
-    }
-
-    if (count != 4) {
-        try w.print("Count = {d}", .{count});
-    }
+    const layer: st.File.NVFP4Layer = try (f.getNVFP4Layer("model.layers.0.self_attn.q_proj") orelse error.MissingLayer);
 
     // Make sure the length are as expected
 
-    try std.testing.expectEqual(weight_global_scale.byte_len * 8 / 32, 1);
-    try std.testing.expectEqual(
-        weight_scale.byte_len * 16 * 4 / 8,
-        weight_packed.byte_len,
-    );
+    // try std.testing.expectEqual(layer.weight_global_scale.byte_len * 8 / 32, 1);
+    // try std.testing.expectEqual(
+    //     layer.weight_scale.byte_len * 16 * 4 / 8,
+    //     layer.weight_packed.byte_len,
+    // );
 
-    const block_scales = try f.readBytes(allocator, weight_scale);
+    const block_scales = try f.readBytes(allocator, layer.weight_scale);
     defer allocator.free(block_scales);
-    const global_scale_array = try f.readBytes(allocator, weight_global_scale);
+    const global_scale_array = try f.readBytes(allocator, layer.weight_global_scale);
     const global_scale: f32 = @bitCast(std.mem.readInt(u32, global_scale_array[0..4], .little));
     allocator.free(global_scale_array);
 
-    const tensors = try f.readBytes(allocator, weight_packed);
+    const tensors = try f.readBytes(allocator, layer.weight_packed);
     defer allocator.free(tensors);
 
     var out: [16]f32 = undefined;

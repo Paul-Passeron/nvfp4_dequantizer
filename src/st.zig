@@ -127,7 +127,7 @@ pub const File = struct {
         };
     }
 
-    pub fn readBytes(self: *const Self, a: std.mem.Allocator, info: TensorInfo) ![]u8 {
+    pub fn readBytes(self: *const Self, a: std.mem.Allocator, info: *const TensorInfo) ![]u8 {
         var read_buf: [READ_BUFFER_CAP]u8 = undefined;
         var reader: std.Io.File.Reader = self.file.reader(self.io, &read_buf);
         try reader.seekTo(self.header_offset_bytes() + info.offset);
@@ -139,11 +139,11 @@ pub const File = struct {
         index: usize,
         f: *const File,
 
-        pub fn next(self: *@This()) ?TensorInfo {
+        pub fn next(self: *@This()) ?*TensorInfo {
             if (self.f.header.tensors.len <= self.index) {
                 return null;
             }
-            const info = self.f.header.tensors[self.index];
+            const info = &self.f.header.tensors[self.index];
             self.index += 1;
             return info;
         }
@@ -152,4 +152,42 @@ pub const File = struct {
             self.index = 0;
         }
     };
+
+    /// View type over a `File` for a specific NVFP4 encoded layer
+    pub const NVFP4Layer = struct {
+        weight_global_scale: *TensorInfo,
+        weight_scale: *TensorInfo,
+        weight_packed: *TensorInfo,
+
+        f: *File,
+    };
+
+    pub fn getNVFP4Layer(self: *Self, base: []const u8) ?NVFP4Layer {
+        var weight_global_scale: ?*TensorInfo = null;
+        var weight_scale: ?*TensorInfo = null;
+        var weight_packed: ?*TensorInfo = null;
+
+        var it = self.iterator();
+        while (it.next()) |t| {
+            if (!std.mem.startsWith(u8, t.name, base)) {
+                continue;
+            }
+            if (std.mem.endsWith(u8, t.name, "weight_global_scale")) {
+                weight_global_scale = t;
+            }
+            if (std.mem.endsWith(u8, t.name, "weight_scale")) {
+                weight_scale = t;
+            }
+            if (std.mem.endsWith(u8, t.name, "weight_packed")) {
+                weight_packed = t;
+            }
+        }
+
+        return .{
+            .weight_global_scale = weight_global_scale orelse return null,
+            .weight_scale = weight_scale orelse return null,
+            .weight_packed = weight_packed orelse return null,
+            .f = self,
+        };
+    }
 };
