@@ -52,6 +52,7 @@ pub const SafeTensorHeader = struct {
 
     pub fn fromJSON(allocator: std.mem.Allocator, blob: []const u8) !Self {
         var arena = std.heap.ArenaAllocator.init(allocator);
+        errdefer arena.deinit();
         const a = arena.allocator();
 
         const root = try std.json.parseFromSliceLeaky(std.json.Value, a, blob, .{
@@ -85,7 +86,7 @@ pub const File = struct {
     const Self = @This();
 
     header: SafeTensorHeader,
-    reader: std.Io.File.Reader,
+    io: std.Io,
     file: std.Io.File,
 
     const READ_BUFFER_CAP = 4096;
@@ -102,16 +103,20 @@ pub const File = struct {
         const json_blob = try reader.interface.readAlloc(allocator, n);
         defer allocator.free(json_blob);
         const header = try SafeTensorHeader.fromJSON(allocator, json_blob);
-        return .{ header, reader, file };
+        return .{ .header = header, .io = io, .file = file };
     }
 
     pub fn close(self: *Self) void {
-        self.file.close();
+        self.file.close(self.io);
         self.header.deinit();
     }
 
     pub fn count(self: *Self) usize {
         return self.header.tensors.len;
+    }
+
+    pub fn header_offset_bytes(self: *const Self) usize {
+        return self.header.tensors.len + 8;
     }
 
     const TensorInfoIterator = struct {};
