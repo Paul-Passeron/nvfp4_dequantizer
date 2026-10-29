@@ -239,7 +239,7 @@ pub const File = struct {
                 const buffer = try a.alloc(u8, READ_BUFFER_CAP);
                 errdefer a.free(buffer);
                 var r = self.file.file.reader(self.file.io, buffer);
-                try r.seekTo(self.file.header_offset_bytes());
+                try r.seekTo(self.file.header_offset_bytes() + self.weights.offset);
                 return .{
                     .r = r,
                     .buffer = buffer,
