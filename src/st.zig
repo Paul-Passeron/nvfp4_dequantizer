@@ -179,4 +179,97 @@ pub const File = struct {
             self.index = 0;
         }
     };
+
+    fn expectedDataType(comptime T: type) ?DataType {
+        switch (T) {
+            f16 => return .F16,
+            f32 => return .F32,
+            f64 => return .F64,
+            u8 => return .U8,
+            u16 => return .U16,
+            u32 => return .U32,
+            u64 => return .U64,
+            else => return null,
+        }
+    }
+
+    pub fn tensorFromInfo(
+        self: *const Self,
+        comptime T: type,
+        infos: *const TensorInfo,
+    ) !?BasicTensor(T) {
+        return .{
+            .weights = infos,
+            .file = self,
+        };
+    }
+
+    pub fn tensor(
+        self: *const Self,
+        comptime T: type,
+        name: []const u8,
+    ) error{WrongDataType}!?BasicTensor(T) {
+        var infos: ?*const TensorInfo = null;
+        var it = self.iterator();
+        while (it.next()) |info| {
+            if (!std.mem.eql(u8, info.name, name)) {
+                continue;
+            }
+            if (info.dtype != expectedDataType(T)) {
+                return error.WrongDataType;
+            }
+            infos = info;
+            break;
+        }
+        const i = infos orelse return null;
+        return self.tensorFromInfo(T, i);
+    }
+
+    pub fn BasicTensor(comptime T: type) type {
+        return struct {
+            weights: *const TensorInfo,
+            file: *const File,
+
+            const ThisRawTensor = @This();
+
+            pub fn reader(
+                self: *const ThisRawTensor,
+                a: std.mem.Allocator,
+            ) !BlockReader {
+                const buffer = try a.alloc(u8, READ_BUFFER_CAP);
+                errdefer a.free(buffer);
+                var r = self.file.file.reader(self.file.io, buffer);
+                try r.seekTo(self.file.header_offset_bytes());
+                return .{
+                    .r = r,
+                    .buffer = buffer,
+                    .a = a,
+                    .tensor = self,
+                    .i = 0,
+                };
+            }
+
+            pub const BlockReader = struct {
+                r: std.Io.File.Reader,
+                buffer: []u8,
+                a: std.mem.Allocator,
+                tensor: *const ThisRawTensor,
+                i: usize,
+
+                pub fn deinit(self: *BlockReader) void {
+                    self.a.free(self.buffer);
+                }
+
+                pub fn next(self: *BlockReader) !?T {
+                    if (self.i >= self.tensor.weights.byte_len) {
+                        return null;
+                    }
+                    var res: [1]T = undefined;
+                    try self.r.interface.readSliceAll(@ptrCast(&res));
+                    self.i += 1;
+                    return res[0];
+                }
+            };
+        };
+    }
 };
