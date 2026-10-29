@@ -224,11 +224,27 @@ const Reader = struct {
     file: st.File,
     interface: std.Io.Reader,
 
-    fn stream(r: *Reader, w: *std.Io.Writer, limit: std.Io.Limit) !usize {
-        _ = r;
+    const Self = @This();
+
+    fn stream(
+        io_reader: *std.Io.Reader,
+        w: *std.Io.Writer,
+        limit: std.Io.Limit,
+    ) !usize {
+        const r: *Self = @alignCast(
+            @fieldParentPtr("interface", io_reader),
+        );
+        return r.read_impl(w, limit);
+    }
+
+    fn read_impl(
+        self: *Self,
+        w: *std.Io.Writer,
+        limit: std.Io.Limit,
+    ) !usize {
+        _ = self;
         _ = w;
         _ = limit;
-
         @panic("TODO");
     }
 
@@ -236,6 +252,15 @@ const Reader = struct {
         return .{
             .vtable = &.{ .stream = stream },
             .buffer = buffer,
+            .seek = 0,
+            .end = 0,
+        };
+    }
+
+    pub fn init(file: st.File, buffer: []u8) Reader {
+        return .{
+            .file = file,
+            .interface = initInterface(buffer),
         };
     }
 };
