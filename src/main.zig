@@ -73,9 +73,12 @@ fn benchmark(
     return start.durationTo(end);
 }
 
-fn nextFloat(reader: *std.Io.Reader) ?f32 {
-    const val = reader.takeInt(u32, .little) catch return null;
-    return @bitCast(val);
+fn nextFloat(r: *std.Io.Reader) !?f32 {
+    const bits = r.takeInt(u32, .little) catch |err| switch (err) {
+        error.EndOfStream => return null,
+        else => |e| return e,
+    };
+    return @bitCast(bits);
 }
 
 fn benchmark_with_reader(
@@ -102,7 +105,7 @@ fn benchmark_with_reader(
     {
         var reader = nvfp4.Reader.init(blocks, buffer);
         const r = &reader.interface;
-        while (nextFloat(r)) |_| {}
+        while (try nextFloat(r)) |_| {}
     }
     const end = Clock.real.now(io);
 
