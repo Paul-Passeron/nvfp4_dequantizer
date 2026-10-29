@@ -218,3 +218,23 @@ pub const NVFP4Tensor = struct {
         };
     }
 };
+
+const Reader = struct {
+    file: st.File,
+    interface: std.Io.Reader,
+
+    fn stream(r: *Reader, w: *std.Io.Writer, limit: std.Io.Limit) !usize {
+        _ = r;
+        _ = w;
+        _ = limit;
+
+        @panic("TODO");
+    }
+
+    pub fn initInterface(buffer: []u8) std.Io.Reader {
+        return .{
+            .vtable = &.{ .stream = stream },
+            .buffer = buffer,
+        };
+    }
+};
