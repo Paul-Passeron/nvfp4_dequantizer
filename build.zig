@@ -4,12 +4,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const st = b.addModule("st", .{
+    const st = b.createModule(.{
         .root_source_file = b.path("src/st.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const nvfp4 = b.addModule("nvfp4", .{
+    const nvfp4 = b.createModule(.{
         .root_source_file = b.path("src/nvfp4.zig"),
         .target = target,
         .optimize = optimize,
