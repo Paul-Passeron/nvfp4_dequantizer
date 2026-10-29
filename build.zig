@@ -20,10 +20,19 @@ pub fn build(b: *std.Build) void {
             .{ .module = st, .name = "st" },
         },
     });
+
     const exe = b.addExecutable(.{
         .name = "nvfp4",
         .root_module = root_module,
     });
+
+    const exe_check = b.addExecutable(.{
+        .name = "nvfp4",
+        .root_module = root_module,
+    });
+
+    const check = b.step("check", "Check if it compiles");
+    check.dependOn(&exe_check.step);
 
     b.installArtifact(exe);
 
