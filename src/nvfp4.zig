@@ -1,4 +1,5 @@
 const std = @import("std");
+const st = @import("st");
 
 // Found the original NVIDIA paper at: <https://arxiv.org/pdf/2509.25149>
 
@@ -112,3 +113,108 @@ pub fn dequantBlock(
     const v2: V = out.*;
     out.* = v * v2;
 }
+
+/// View type over a `File` for a specific NVFP4 encoded layer
+pub const NVFP4Tensor = struct {
+    weight_global_scale: *const st.TensorInfo,
+    weight_scale: *const st.TensorInfo,
+    weight_packed: *const st.TensorInfo,
+
+    file: *const st.File,
+
+    pub const BlockReader = struct {
+        global_scale: f32,
+        block_scale_reader: std.Io.File.Reader,
+        packed_reader: std.Io.File.Reader,
+
+        block_scale_buffer: []u8,
+        packed_buffer: []u8,
+        allocator: std.mem.Allocator,
+
+        layer: *NVFP4Tensor,
+        i: usize,
+
+        pub fn deinit(self: *BlockReader) void {
+            self.allocator.free(self.block_scale_buffer);
+            self.allocator.free(self.packed_buffer);
+        }
+
+        pub fn next(self: *BlockReader, out: *[16]f32) !bool {
+            if (self.i >= self.layer.weight_scale.byte_len) {
+                return false;
+            }
+            self.i += 1;
+            var bytes: [8]u8 = undefined;
+            try self.packed_reader.interface.readSliceAll(&bytes);
+            const scale = try self.block_scale_reader.interface.takeByte();
+            dequantBlock(&bytes, scale, self.global_scale, out);
+            return true;
+        }
+    };
+
+    fn getGlobalScale(self: *NVFP4Tensor) !f32 {
+        return self.file.readScalar(f32, self.weight_global_scale);
+    }
+
+    pub fn reader(self: *NVFP4Tensor, allocator: std.mem.Allocator) !BlockReader {
+        const global_scale = try self.getGlobalScale();
+
+        const block_scale_buffer: []u8 = try allocator.alloc(u8, 1024);
+        errdefer allocator.free(block_scale_buffer);
+
+        const packed_buffer: []u8 = try allocator.alloc(u8, 1024);
+        errdefer allocator.free(packed_buffer);
+
+        var block_scale_reader = self.file.file.reader(self.file.io, block_scale_buffer);
+        try block_scale_reader.seekTo(self.file.header_offset_bytes() + self.weight_scale.offset);
+
+        var packed_reader = self.file.file.reader(self.file.io, packed_buffer);
+        try packed_reader.seekTo(self.file.header_offset_bytes() + self.weight_packed.offset);
+
+        return .{
+            .global_scale = global_scale,
+            .block_scale_reader = block_scale_reader,
+            .packed_reader = packed_reader,
+            .block_scale_buffer = block_scale_buffer,
+            .packed_buffer = packed_buffer,
+            .allocator = allocator,
+            .i = 0,
+            .layer = self,
+        };
+    }
+
+    pub fn from(file: *const st.File, base: []const u8) error{ NotNVFP4, MissingTensorInfo }!?NVFP4Tensor {
+        var weight_global_scale: ?*const st.TensorInfo = null;
+        var weight_scale: ?*const st.TensorInfo = null;
+        var weight_packed: ?*const st.TensorInfo = null;
+
+        var it = file.iterator();
+        while (it.next()) |t| {
+            if (!std.mem.startsWith(u8, t.name, base)) {
+                continue;
+            }
+            if (std.mem.endsWith(u8, t.name, "weight_global_scale")) {
+                weight_global_scale = t;
+            }
+            if (std.mem.endsWith(u8, t.name, "weight_scale")) {
+                weight_scale = t;
+            }
+            if (std.mem.endsWith(u8, t.name, "weight_packed")) {
+                if (t.dtype != .U8) {
+                    return error.NotNVFP4;
+                }
+                weight_packed = t;
+            }
+        }
+
+        return .{
+            .weight_global_scale = weight_global_scale orelse
+                return error.MissingTensorInfo,
+            .weight_scale = weight_scale orelse
+                return error.MissingTensorInfo,
+            .weight_packed = weight_packed orelse
+                return error.MissingTensorInfo,
+            .file = file,
+        };
+    }
+};
