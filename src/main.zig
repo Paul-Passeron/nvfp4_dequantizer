@@ -74,8 +74,9 @@ pub fn main() !void {
     //         try w.print("Count = {d}", .{count});
     //     }
 
-    const layer: st.File.NVFP4Layer = try (f.getNVFP4Layer("model.layers.0.self_attn.q_proj") orelse error.MissingLayer);
-
+    var layer: st.File.NVFP4Layer = try (f.getNVFP4Layer("model.layers.0.self_attn.q_proj") orelse error.MissingLayer);
+    var reader = try layer.reader(allocator);
+    defer reader.deinit();
     // Make sure the length are as expected
 
     // try std.testing.expectEqual(layer.weight_global_scale.byte_len * 8 / 32, 1);

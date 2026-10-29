@@ -160,6 +160,53 @@ pub const File = struct {
         weight_packed: *const TensorInfo,
 
         f: *const File,
+
+        pub const Reader = struct {
+            global_scale: f32,
+            block_scale_reader: std.Io.File.Reader,
+            packed_scale_reader: std.Io.File.Reader,
+
+            block_scale_buffer: []u8,
+            packed_scale_buffer: []u8,
+            allocator: std.mem.Allocator,
+
+            pub fn deinit(self: *Reader) void {
+                self.allocator.free(self.block_scale_buffer);
+                self.allocator.free(self.packed_scale_buffer);
+            }
+        };
+
+        fn getGlobalScale(self: *NVFP4Layer, allocator: std.mem.Allocator) !f32 {
+            const global_scale_array = try self.f.readBytes(
+                allocator,
+                self.weight_global_scale,
+            );
+            defer allocator.free(global_scale_array);
+            const global_scale: f32 = @bitCast(std.mem.readInt(
+                u32,
+                global_scale_array[0..4],
+                .little,
+            ));
+            return global_scale;
+        }
+
+        pub fn reader(self: *NVFP4Layer, allocator: std.mem.Allocator) !Reader {
+            const global_scale = try self.getGlobalScale(allocator);
+            const block_scale_buffer: []u8 = try allocator.alloc(u8, READ_BUFFER_CAP);
+            errdefer allocator.free(block_scale_buffer);
+            const packed_scale_buffer: []u8 = try allocator.alloc(u8, READ_BUFFER_CAP);
+            errdefer allocator.free(packed_scale_buffer);
+            const block_scale_reader = self.f.file.reader(self.f.io, block_scale_buffer);
+            const packed_scale_reader = self.f.file.reader(self.f.io, packed_scale_buffer);
+            return .{
+                .global_scale = global_scale,
+                .block_scale_reader = block_scale_reader,
+                .packed_scale_reader = packed_scale_reader,
+                .block_scale_buffer = block_scale_buffer,
+                .packed_scale_buffer = packed_scale_buffer,
+                .allocator = allocator,
+            };
+        }
     };
 
     pub fn getNVFP4Layer(self: *Self, base: []const u8) ?NVFP4Layer {
