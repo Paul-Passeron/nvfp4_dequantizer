@@ -266,7 +266,7 @@ pub const File = struct {
                     }
                     var res: [1]T = undefined;
                     try self.r.interface.readSliceAll(@ptrCast(&res));
-                    self.i += 1;
+                    self.i += @sizeOf(T);
                     return res[0];
                 }
             };
