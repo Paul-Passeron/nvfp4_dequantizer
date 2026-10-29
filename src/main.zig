@@ -20,7 +20,8 @@ pub fn main() !void {
     var f = try st.File.open(io, allocator, filename);
     defer f.close();
 
-    var layer: st.File.NVFP4Layer = f.getNVFP4Layer("model.layers.0.self_attn.q_proj") orelse
+    var layer: st.File.NVFP4Tensor =
+        f.getNVFP4Tensor("model.layers.0.self_attn.q_proj") orelse
         return error.MissingLayer;
     var reader = try layer.reader(allocator);
     defer reader.deinit();

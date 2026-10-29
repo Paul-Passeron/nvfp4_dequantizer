@@ -111,7 +111,7 @@ pub const File = struct {
         defer allocator.free(json_blob);
 
         const header = try SafeTensorHeader.fromJSON(allocator, json_blob);
-        
+
         return .{ .header = header, .io = io, .file = file, .n = n };
     }
 
@@ -182,7 +182,7 @@ pub const File = struct {
     };
 
     /// View type over a `File` for a specific NVFP4 encoded layer
-    pub const NVFP4Layer = struct {
+    pub const NVFP4Tensor = struct {
         weight_global_scale: *const TensorInfo,
         weight_scale: *const TensorInfo,
         weight_packed: *const TensorInfo,
@@ -198,7 +198,7 @@ pub const File = struct {
             packed_scale_buffer: []u8,
             allocator: std.mem.Allocator,
 
-            layer: *NVFP4Layer,
+            layer: *NVFP4Tensor,
             i: usize,
 
             pub fn deinit(self: *BlockReader) void {
@@ -219,11 +219,11 @@ pub const File = struct {
             }
         };
 
-        fn getGlobalScale(self: *NVFP4Layer) !f32 {
+        fn getGlobalScale(self: *NVFP4Tensor) !f32 {
             return self.f.readScalar(f32, self.weight_global_scale);
         }
 
-        pub fn reader(self: *NVFP4Layer, allocator: std.mem.Allocator) !BlockReader {
+        pub fn reader(self: *NVFP4Tensor, allocator: std.mem.Allocator) !BlockReader {
             const global_scale = try self.getGlobalScale();
 
             const block_scale_buffer: []u8 = try allocator.alloc(u8, READ_BUFFER_CAP);
@@ -251,7 +251,7 @@ pub const File = struct {
         }
     };
 
-    pub fn getNVFP4Layer(self: *Self, base: []const u8) ?NVFP4Layer {
+    pub fn getNVFP4Tensor(self: *Self, base: []const u8) ?NVFP4Tensor {
         var weight_global_scale: ?*const TensorInfo = null;
         var weight_scale: ?*const TensorInfo = null;
         var weight_packed: ?*const TensorInfo = null;
