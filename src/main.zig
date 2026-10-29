@@ -79,6 +79,14 @@ pub fn main() !void {
         try w.print("Count = {d}", .{count});
     }
 
+    // Make sure the length are as expected
+
+    try std.testing.expectEqual(weight_global_scale.byte_len * 8 / 32, 1);
+    try std.testing.expectEqual(
+        weight_scale.byte_len * 16 * 4 / 8,
+        weight_packed.byte_len,
+    );
+
     var out: [16]f32 = undefined;
     const scale: u8 = 2;
     const global: f32 = 1.0;
