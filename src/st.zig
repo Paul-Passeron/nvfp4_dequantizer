@@ -85,6 +85,7 @@ pub const SafeTensorHeader = struct {
 pub const File = struct {
     const Self = @This();
 
+    n: usize,
     header: SafeTensorHeader,
     io: std.Io,
     file: std.Io.File,
@@ -103,7 +104,7 @@ pub const File = struct {
         const json_blob = try reader.interface.readAlloc(allocator, n);
         defer allocator.free(json_blob);
         const header = try SafeTensorHeader.fromJSON(allocator, json_blob);
-        return .{ .header = header, .io = io, .file = file };
+        return .{ .header = header, .io = io, .file = file, .n = n };
     }
 
     pub fn close(self: *Self) void {
@@ -116,7 +117,7 @@ pub const File = struct {
     }
 
     pub fn header_offset_bytes(self: *const Self) usize {
-        return self.header.tensors.len + 8;
+        return self.n + 8;
     }
 
     pub fn iterator(self: *const Self) Iterator {
