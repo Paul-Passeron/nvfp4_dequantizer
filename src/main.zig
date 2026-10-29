@@ -44,21 +44,39 @@ pub fn main() !void {
     var f = try st.File.open(io, allocator, filename);
     defer f.close();
 
+    var input_global_scale: st.TensorInfo = undefined;
+    var weight_global_scale: st.TensorInfo = undefined;
+    var weight_scale: st.TensorInfo = undefined;
+    var weight_packed: st.TensorInfo = undefined;
+
+    var count: u32 = 0;
+
     var it = f.iterator();
     while (it.next()) |t| {
         if (!std.mem.startsWith(u8, t.name, "model.layers.0.self_attn.q_proj")) {
             continue;
         }
-        try w.print("{s}: {}\n", .{ t.name, t.byte_len });
-        const buffer = try f.readBytes(allocator, t);
-        defer allocator.free(buffer);
 
-        for (buffer) |b| {
-            const lo, const hi = nvfp4.unpack(b);
-            const lo_f = nvfp4.decodeE2M1(lo);
-            const hi_f = nvfp4.decodeE2M1(hi);
-            try w.print("{}: {} and {}\n", .{ b, lo_f, hi_f });
+        if (std.mem.endsWith(u8, t.name, "input_global_scale")) {
+            input_global_scale = t;
+            count += 1;
         }
+        if (std.mem.endsWith(u8, t.name, "weight_global_scale")) {
+            weight_global_scale = t;
+            count += 1;
+        }
+        if (std.mem.endsWith(u8, t.name, "weight_scale")) {
+            weight_scale = t;
+            count += 1;
+        }
+        if (std.mem.endsWith(u8, t.name, "weight_packed")) {
+            weight_packed = t;
+            count += 1;
+        }
+    }
+
+    if (count != 4) {
+        try w.print("Count = {d}", .{count});
     }
 
     var out: [16]f32 = undefined;
