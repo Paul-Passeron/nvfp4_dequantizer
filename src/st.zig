@@ -1,4 +1,5 @@
 const std = @import("std");
+const nvfp4 = @import("nvfp4");
 
 pub const DataType = enum { U8, U16, U32, U64, F8, F16, F32, F64, BF16, F8_E4M3 };
 
@@ -161,7 +162,7 @@ pub const File = struct {
 
         f: *const File,
 
-        pub const Reader = struct {
+        pub const BlockReader = struct {
             global_scale: f32,
             block_scale_reader: std.Io.File.Reader,
             packed_scale_reader: std.Io.File.Reader,
@@ -170,9 +171,24 @@ pub const File = struct {
             packed_scale_buffer: []u8,
             allocator: std.mem.Allocator,
 
-            pub fn deinit(self: *Reader) void {
+            layer: *NVFP4Layer,
+            i: usize,
+
+            pub fn deinit(self: *BlockReader) void {
                 self.allocator.free(self.block_scale_buffer);
                 self.allocator.free(self.packed_scale_buffer);
+            }
+
+            pub fn next(self: *BlockReader, out: *[16]f32) !bool {
+                if (self.i >= self.layer.weight_scale.byte_len) {
+                    return false;
+                }
+                self.i += 1;
+                var bytes: [8]u8 = undefined;
+                try self.packed_scale_reader.interface.readSliceAll(&bytes);
+                const scale = try self.block_scale_reader.interface.takeByte();
+                nvfp4.dequantBlock(&bytes, scale, self.global_scale, out);
+                return true;
             }
         };
 
@@ -190,14 +206,16 @@ pub const File = struct {
             return global_scale;
         }
 
-        pub fn reader(self: *NVFP4Layer, allocator: std.mem.Allocator) !Reader {
+        pub fn reader(self: *NVFP4Layer, allocator: std.mem.Allocator) !BlockReader {
             const global_scale = try self.getGlobalScale(allocator);
             const block_scale_buffer: []u8 = try allocator.alloc(u8, READ_BUFFER_CAP);
             errdefer allocator.free(block_scale_buffer);
             const packed_scale_buffer: []u8 = try allocator.alloc(u8, READ_BUFFER_CAP);
             errdefer allocator.free(packed_scale_buffer);
-            const block_scale_reader = self.f.file.reader(self.f.io, block_scale_buffer);
-            const packed_scale_reader = self.f.file.reader(self.f.io, packed_scale_buffer);
+            var block_scale_reader = self.f.file.reader(self.f.io, block_scale_buffer);
+            try block_scale_reader.seekTo(self.f.header_offset_bytes() + self.weight_scale.offset);
+            var packed_scale_reader = self.f.file.reader(self.f.io, packed_scale_buffer);
+            try packed_scale_reader.seekTo(self.f.header_offset_bytes() + self.weight_packed.offset);
             return .{
                 .global_scale = global_scale,
                 .block_scale_reader = block_scale_reader,
@@ -205,6 +223,8 @@ pub const File = struct {
                 .block_scale_buffer = block_scale_buffer,
                 .packed_scale_buffer = packed_scale_buffer,
                 .allocator = allocator,
+                .i = 0,
+                .layer = self,
             };
         }
     };

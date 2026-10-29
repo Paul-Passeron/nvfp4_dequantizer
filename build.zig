@@ -8,6 +8,9 @@ pub fn build(b: *std.Build) void {
     const st = b.addModule("st", .{
         .root_source_file = b.path("src/st.zig"),
         .target = b.graph.host,
+        .imports = &.{
+            .{ .module = nvfp4, .name = "nvfp4" },
+        },
     });
     const root_module = b.addModule("main", .{
         .root_source_file = b.path("src/main.zig"),
