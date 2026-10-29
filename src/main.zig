@@ -1,7 +1,7 @@
 const std = @import("std");
 const nvfp4 = @import("nvfp4");
 const st = @import("st");
-const print = std.debug.print;
+// const print = std.debug.print;
 
 test "nvfp4 and f32 are close enough" {
     const a = std.testing.allocator;
@@ -66,10 +66,10 @@ pub fn main() !void {
     );
     defer converted_f.close();
 
-    var it = converted_f.iterator();
-    while (it.next()) |val| {
-        print("{s} {}\n", .{ val.name, val.dtype });
-    }
+    // var it = converted_f.iterator();
+    // while (it.next()) |val| {
+    //     print("{s} {}\n", .{ val.name, val.dtype });
+    // }
 
     var t = try nvfp4.NVFP4Tensor.from(
         &f,
@@ -97,9 +97,5 @@ pub fn main() !void {
                 break;
             }
         }
-        for (out, converted_out) |v, cv| {
-            print("({} {}) ", .{ v, cv });
-        }
     }
-    print("\n", .{});
 }

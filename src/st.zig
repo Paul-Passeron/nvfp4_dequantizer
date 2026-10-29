@@ -123,7 +123,7 @@ pub const File = struct {
         return self.header.tensors.len;
     }
 
-    pub fn header_offset_bytes(self: *const Self) usize {
+    pub fn headerOffsetBytes(self: *const Self) usize {
         return self.n + 8;
     }
 
@@ -138,7 +138,7 @@ pub const File = struct {
         var read_buf: [READ_BUFFER_CAP]u8 = undefined;
 
         var reader: std.Io.File.Reader = self.file.reader(self.io, &read_buf);
-        try reader.seekTo(self.header_offset_bytes() + info.offset);
+        try reader.seekTo(self.headerOffsetBytes() + info.offset);
 
         const res = try reader.interface.readAllocAll(a, info.byte_len);
 
@@ -151,7 +151,7 @@ pub const File = struct {
         var bytes: [@sizeOf(T)]u8 = undefined;
 
         var reader: std.Io.File.Reader = self.file.reader(self.io, &read_buf);
-        try reader.seekTo(self.header_offset_bytes() + info.offset);
+        try reader.seekTo(self.headerOffsetBytes() + info.offset);
 
         try reader.interface.readSliceAll(&bytes);
 
@@ -239,7 +239,7 @@ pub const File = struct {
                 const buffer = try a.alloc(u8, READ_BUFFER_CAP);
                 errdefer a.free(buffer);
                 var r = self.file.file.reader(self.file.io, buffer);
-                try r.seekTo(self.file.header_offset_bytes() + self.weights.offset);
+                try r.seekTo(self.file.headerOffsetBytes() + self.weights.offset);
                 return .{
                     .r = r,
                     .buffer = buffer,

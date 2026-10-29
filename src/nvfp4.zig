@@ -166,10 +166,10 @@ pub const NVFP4Tensor = struct {
         errdefer allocator.free(packed_buffer);
 
         var block_scale_reader = self.file.file.reader(self.file.io, block_scale_buffer);
-        try block_scale_reader.seekTo(self.file.header_offset_bytes() + self.weight_scale.offset);
+        try block_scale_reader.seekTo(self.file.headerOffsetBytes() + self.weight_scale.offset);
 
         var packed_reader = self.file.file.reader(self.file.io, packed_buffer);
-        try packed_reader.seekTo(self.file.header_offset_bytes() + self.weight_packed.offset);
+        try packed_reader.seekTo(self.file.headerOffsetBytes() + self.weight_packed.offset);
 
         return .{
             .global_scale = global_scale,
