@@ -1,20 +1,26 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
     const st = b.addModule("st", .{
         .root_source_file = b.path("src/st.zig"),
-        .target = b.graph.host,
+        .target = target,
+        .optimize = optimize,
     });
     const nvfp4 = b.addModule("nvfp4", .{
         .root_source_file = b.path("src/nvfp4.zig"),
-        .target = b.graph.host,
+        .target = target,
+        .optimize = optimize,
         .imports = &.{
             .{ .module = st, .name = "st" },
         },
     });
-    const root_module = b.addModule("main", .{
+    const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
-        .target = b.graph.host,
+        .target = target,
+        .optimize = optimize,
         .imports = &.{
             .{ .module = nvfp4, .name = "nvfp4" },
             .{ .module = st, .name = "st" },
@@ -40,6 +46,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
+    run_cmd.addPassthruArgs();
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
