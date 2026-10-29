@@ -81,7 +81,7 @@ fn nextFloat(r: *std.Io.Reader) !?f32 {
     return @bitCast(bits);
 }
 
-fn benchmark_with_reader(
+fn benchmark_with_reader_one_at_a_time(
     path: []const u8,
     base: []const u8,
     allocator: std.mem.Allocator,
@@ -119,7 +119,7 @@ pub fn main() !void {
         "model.layers.0.self_attn.q_proj",
         allocator,
     );
-    const reader_duration = try benchmark_with_reader(
+    const reader_duration = try benchmark_with_reader_one_at_a_time(
         "nvfp4/model.safetensors",
         "model.layers.0.self_attn.q_proj",
         allocator,
