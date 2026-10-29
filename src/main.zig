@@ -146,21 +146,19 @@ fn benchmark_with_reader_into_writer(
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
-    const duration = try benchmark(
-        "nvfp4/model.safetensors",
-        "model.layers.0.self_attn.q_proj",
-        allocator,
-    );
+    const filename = "nvfp4/model.safetensors";
+    const tensor = "model.layers.0.self_attn.q_proj";
+    const duration = try benchmark(filename, tensor, allocator);
     const reader_duration = try benchmark_with_reader_one_at_a_time(
-        "nvfp4/model.safetensors",
-        "model.layers.0.self_attn.q_proj",
+        filename,
+        tensor,
         allocator,
     );
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     const into_writer_duration = try benchmark_with_reader_into_writer(
-        "nvfp4/model.safetensors",
-        "model.layers.0.self_attn.q_proj",
+        filename,
+        tensor,
         allocator,
         &aw.writer,
     );
