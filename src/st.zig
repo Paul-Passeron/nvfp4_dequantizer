@@ -139,7 +139,7 @@ pub const File = struct {
         index: usize,
         f: *const File,
 
-        pub fn next(self: *@This()) ?*TensorInfo {
+        pub fn next(self: *@This()) ?*const TensorInfo {
             if (self.f.header.tensors.len <= self.index) {
                 return null;
             }
@@ -155,17 +155,17 @@ pub const File = struct {
 
     /// View type over a `File` for a specific NVFP4 encoded layer
     pub const NVFP4Layer = struct {
-        weight_global_scale: *TensorInfo,
-        weight_scale: *TensorInfo,
-        weight_packed: *TensorInfo,
+        weight_global_scale: *const TensorInfo,
+        weight_scale: *const TensorInfo,
+        weight_packed: *const TensorInfo,
 
-        f: *File,
+        f: *const File,
     };
 
     pub fn getNVFP4Layer(self: *Self, base: []const u8) ?NVFP4Layer {
-        var weight_global_scale: ?*TensorInfo = null;
-        var weight_scale: ?*TensorInfo = null;
-        var weight_packed: ?*TensorInfo = null;
+        var weight_global_scale: ?*const TensorInfo = null;
+        var weight_scale: ?*const TensorInfo = null;
+        var weight_packed: ?*const TensorInfo = null;
 
         var it = self.iterator();
         while (it.next()) |t| {
