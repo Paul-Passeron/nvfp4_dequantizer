@@ -112,6 +112,38 @@ fn benchmark_with_reader_one_at_a_time(
     return start.durationTo(end);
 }
 
+fn benchmark_with_reader_into_writer(
+    path: []const u8,
+    base: []const u8,
+    allocator: std.mem.Allocator,
+    w: *std.Io.Writer,
+) !Io.Duration {
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var f = try st.File.open(io, allocator, path);
+    defer f.close();
+
+    var t = try nvfp4.NVFP4Tensor.from(&f, base) orelse
+        return error.MissingLayer;
+    var blocks = try t.reader(allocator);
+    defer blocks.deinit();
+
+    const buffer = try allocator.alloc(u8, 4096);
+    defer allocator.free(buffer);
+
+    const start = Clock.real.now(io);
+    {
+        var reader = nvfp4.Reader.init(blocks, buffer);
+        const r = &reader.interface;
+        _ = try r.streamRemaining(w);
+    }
+    const end = Clock.real.now(io);
+
+    return start.durationTo(end);
+}
+
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
     const duration = try benchmark(
@@ -124,6 +156,21 @@ pub fn main() !void {
         "model.layers.0.self_attn.q_proj",
         allocator,
     );
-    std.debug.print("Took {f}\n", .{duration});
-    std.debug.print("Took {f}\n", .{reader_duration});
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    const into_writer_duration = try benchmark_with_reader_into_writer(
+        "nvfp4/model.safetensors",
+        "model.layers.0.self_attn.q_proj",
+        allocator,
+        &aw.writer,
+    );
+    std.debug.print("`benchmark` took {f}\n", .{duration});
+    std.debug.print(
+        "`benchmark_with_reader_one_at_a_time` took {f}\n",
+        .{reader_duration},
+    );
+    std.debug.print(
+        "`benchmark_with_reader_into_writer` took {f}\n",
+        .{into_writer_duration},
+    );
 }
