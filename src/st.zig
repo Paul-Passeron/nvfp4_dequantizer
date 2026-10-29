@@ -251,7 +251,7 @@ pub const File = struct {
         }
     };
 
-    pub fn getNVFP4Tensor(self: *Self, base: []const u8) ?NVFP4Tensor {
+    pub fn getNVFP4Tensor(self: *Self, base: []const u8) error{ NotNVFP4, MissingTensorInfo }!?NVFP4Tensor {
         var weight_global_scale: ?*const TensorInfo = null;
         var weight_scale: ?*const TensorInfo = null;
         var weight_packed: ?*const TensorInfo = null;
@@ -268,14 +268,20 @@ pub const File = struct {
                 weight_scale = t;
             }
             if (std.mem.endsWith(u8, t.name, "weight_packed")) {
+                if (t.dtype != .U8) {
+                    return error.NotNVFP4;
+                }
                 weight_packed = t;
             }
         }
 
         return .{
-            .weight_global_scale = weight_global_scale orelse return null,
-            .weight_scale = weight_scale orelse return null,
-            .weight_packed = weight_packed orelse return null,
+            .weight_global_scale = weight_global_scale orelse
+                return error.MissingTensorInfo,
+            .weight_scale = weight_scale orelse
+                return error.MissingTensorInfo,
+            .weight_packed = weight_packed orelse
+                return error.MissingTensorInfo,
             .f = self,
         };
     }
