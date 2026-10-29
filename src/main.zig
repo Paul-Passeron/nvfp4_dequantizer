@@ -24,10 +24,8 @@ const st = @import("st");
 //      4 exponent bits
 //      3 mantissa bits
 
-const FOUR_KB = 4 * 1024;
-
 pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -35,7 +33,7 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var write_buf: [FOUR_KB]u8 = undefined;
+    var write_buf: [4096]u8 = undefined;
     var fw = std.Io.File.stdout().writer(io, &write_buf);
     const w = &fw.interface;
 
@@ -87,7 +85,6 @@ pub fn main() !void {
         weight_packed.byte_len,
     );
 
-    const block_size: usize = weight_scale.byte_len; // N u8 so block size is byte length
     const block_scales = try f.readBytes(allocator, weight_scale);
     defer allocator.free(block_scales);
     const global_scale_array = try f.readBytes(allocator, weight_global_scale);
@@ -98,8 +95,7 @@ pub fn main() !void {
     defer allocator.free(tensors);
 
     var out: [16]f32 = undefined;
-    for (0..block_size, block_scales) |i, scale| {
-        // TODO: This is not fast (kind of on purpose)
+    for (block_scales, 0..) |scale, i| {
         const bytes = tensors[i * 8 ..][0..8];
         nvfp4.dequantBlock(bytes, scale, global_scale, &out);
         for (out) |v| {
