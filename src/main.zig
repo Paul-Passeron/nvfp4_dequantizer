@@ -87,14 +87,27 @@ pub fn main() !void {
         weight_packed.byte_len,
     );
 
+    const block_size: usize = weight_scale.byte_len; // N u8 so block size is byte length
+    const block_scales = try f.readBytes(allocator, weight_scale);
+    defer allocator.free(block_scales);
+    const global_scale_array = try f.readBytes(allocator, weight_global_scale);
+    const global_scale: f32 = (@as(*const f32, @ptrCast(@alignCast(global_scale_array.ptr)))).*;
+    allocator.free(global_scale_array);
+
+    const tensors = try f.readBytes(allocator, weight_packed);
+    defer allocator.free(tensors);
+
     var out: [16]f32 = undefined;
-    const scale: u8 = 2;
-    const global: f32 = 1.0;
-    const bytes = [8]u8{ 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE };
-    nvfp4.dequantBlock(&bytes, scale, global, &out);
-    for (out) |o| {
-        try w.print("{}, ", .{o});
+    for (0..block_size, block_scales) |i, scale| {
+        // TODO: This is not fast (kind of on purpose)
+        const start = i * 8;
+        const end = (i + 1) * 8;
+        const bytes = &tensors[start..end];
+        nvfp4.dequantBlock(@ptrCast(bytes), scale, global_scale, &out);
+        for (out) |v| {
+            try w.print("{} ", .{v});
+        }
+        try w.print("\n", .{});
     }
-    try w.print("\n", .{});
     try w.flush();
 }
