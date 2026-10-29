@@ -219,6 +219,7 @@ pub const NVFP4Tensor = struct {
     }
 };
 
+/// Inspired by Std.Io.File.Reader
 const Reader = struct {
     file: st.File,
     interface: std.Io.Reader,
