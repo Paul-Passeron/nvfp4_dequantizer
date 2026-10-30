@@ -361,7 +361,7 @@ pub const TensorReader = struct {
             tensor.weight_scale,
             .{ .file = buffers.scales },
         );
-        const inv_global = try tensor.weight_global_scale.readScalar(io, f32);
+        const inv_global = 1.0 / try tensor.weight_global_scale.readScalar(io, f32);
 
         const remaining_blocks = tensor.weight_scale.byte_len;
         return .{
