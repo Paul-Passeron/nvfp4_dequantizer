@@ -416,17 +416,17 @@ pub const TensorReader = struct {
     fn discard(
         io_reader: *std.Io.Reader,
         limit: std.Io.Limit,
-    ) !usize {
+    ) error{ EndOfStream, ReadFailed }!usize {
         const r: *TensorReader = @alignCast(
             @fieldParentPtr("interface", io_reader),
         );
-        return r.stream_impl(limit);
+        return r.discard_impl(limit);
     }
 
     fn discard_impl(
         self: *TensorReader,
         limit: std.Io.Limit,
-    ) std.Io.Reader.StreamError!usize {
+    ) error{ EndOfStream, ReadFailed }!usize {
         const actual_limit = limit.min(.limited(self.remaining));
         const discarded = try self
             .file_reader
