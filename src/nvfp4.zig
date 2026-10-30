@@ -154,4 +154,34 @@ pub const Tensor = struct {
         _ = base;
         @panic("TODO");
     }
+
+    pub fn shape(self: *const Tensor) [2]u64 {
+        _ = self;
+        @panic("TODO");
+    }
+
+    pub fn dequantByteLen(self: *const Tensor) u64 {
+        _ = self;
+        @panic("TODO");
+    }
+
+    pub fn reader(
+        self: *const Tensor,
+        io: std.Io,
+        buffers: st.TensorReader.Buffers,
+    ) !TensorReader {
+        return TensorReader.init(io, self, buffers);
+    }
+};
+
+pub const TensorReader = struct {
+    fn init(
+        io: std.Io,
+        tensor: *const Tensor,
+        buffers: st.TensorReader.Buffers,
+    ) !TensorReader {
+        _ = io;
+        _ = tensor;
+        _ = buffers;
+    }
 };
