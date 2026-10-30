@@ -39,6 +39,21 @@ fn E2M1_from_parts(
 }
 
 fn decodeE2M1_impl(x: u4) f32 {
+    // const v: u32 = x;
+    //     const s = (v >> 3) & 1;
+    //     const e1 = (v >> 2) & 1;
+    //     const e0 = (v >> 1) & 1;
+    //     const m = v & 1;
+    //
+    //     const t = ~e1 & (e0 | m) & 1;
+    //
+    //     var tt = t | (t << 1);
+    //     tt |= tt << 2;
+    //     tt |= tt << 4;
+    //
+    //     const exp = (e1 << 7) | (tt & 0b0111_1110) | e0;
+    //     const bits = (s << 31) | (exp << 23) | ((m & (e0 | e1)) << 22);
+    //     return @bitCast(bits);
     const sign: u16 = @as(u16, x >> 3) << 15;
     const e: u16 = (x >> 1) & 0b11;
     const m: u16 = x & 0b1;
@@ -124,6 +139,47 @@ fn checkDequantRangeInput(
     if (packed_bytes.len % 8 != 0) return err;
     if (packed_bytes.len / 8 != scales.len) return err;
     if (out.len != scales.len * 16) return err;
+}
+
+fn split_bytes_into_nibbles(
+    comptime n: comptime_int,
+    comptime T: type,
+    bytes: @Vector(n, u8),
+) @Vector(n * 2, T) {
+    const mask: @Vector(8, u8) = @splat(0xF);
+    const hi = bytes & mask;
+    const lo = (bytes >> @splat(4)) & mask;
+    return std.simd.interlace(.{ lo, hi });
+}
+
+fn e2m1Range(
+    packed_bytes: *const [8]u8,
+) @Vector(16, f32) {
+    const V32 = @Vector(16, u32);
+    const bytes: @Vector(8, u8) = packed_bytes.*;
+    const v: V32 = split_bytes_into_nibbles(8, u32, bytes);
+    const s: V32 = (v >> @splat(3)) & @as(V32, @splat(1));
+    const e1 = (v >> @splat(2)) & @as(V32, @splat(1));
+    const e0 = (v >> @splat(1)) & @as(V32, @splat(1));
+    const m = v & @as(V32, @splat(1));
+    const t = ~e1 & (e0 | m) & @as(V32, @splat(1));
+    var tt = t | (t << @as(V32, @splat(1)));
+    tt |= tt << @splat(2);
+    tt |= tt << @splat(4);
+    const exp = (e1 << @splat(7)) | (tt & @as(V32, @splat(0b0111_1110))) | e0;
+    const bits = (s << @splat(31)) | (exp << @splat(23)) | ((m & (e0 | e1)) << @splat(22));
+    return @bitCast(bits);
+}
+
+test "e2m1" {
+    const values: [8]u8 = .{ 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90 };
+    const split: [16]u4 = .{ 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0 };
+    const res = e2m1Range(&values);
+    const simd: [16]f32 = res;
+    for (simd, split) |a, b| {
+        const decode = decodeE2M1(b);
+        try std.testing.expectEqual(a, decode);
+    }
 }
 
 pub fn dequantRange(
