@@ -384,10 +384,10 @@ pub const TensorReader = struct {
         const r: *TensorReader = @alignCast(
             @fieldParentPtr("interface", io_reader),
         );
-        return r.read_impl(io_writer, limit);
+        return r.stream_impl(io_writer, limit);
     }
 
-    fn read_impl(
+    fn stream_impl(
         self: *TensorReader,
         io_writer: *std.Io.Writer,
         limit: std.Io.Limit,
@@ -405,7 +405,7 @@ pub const TensorReader = struct {
         const r: *TensorReader = @alignCast(
             @fieldParentPtr("interface", io_reader),
         );
-        return r.read_impl(limit);
+        return r.stream_impl(limit);
     }
 
     fn discard_impl(
