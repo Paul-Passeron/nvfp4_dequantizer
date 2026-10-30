@@ -699,7 +699,7 @@ test "can read out of all tensors" {
     }
 }
 
-test "both ways to read agree" {
+test "both ways to read the same bytes" {
     const a = std.testing.allocator;
     const filename = "converted_f32/model-00001-of-00001.safetensors";
     var threaded: std.Io.Threaded = .init(a, .{});
