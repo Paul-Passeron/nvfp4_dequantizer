@@ -309,8 +309,11 @@ pub const Tensor = struct {
         if (slice.len != @sizeOf(T)) {
             return error.ReadFailed;
         }
-        const reinterpreted: []T = @alignCast(std.mem.bytesAsSlice(T, slice));
-        return reinterpreted[0];
+        return @bitCast(std.mem.readInt(
+            @Int(.unsigned, @bitSizeOf(T)),
+            slice[0..@sizeOf(T)],
+            .little,
+        ));
     }
 
     const Errors = std.Io.File.OpenError ||
@@ -544,7 +547,7 @@ pub const Registry = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-    ) !Registry {
+    ) Registry {
         return .{
             .arena = .init(allocator),
             .tensors = .empty,
@@ -556,7 +559,7 @@ pub const Registry = struct {
         io: std.Io,
         path: []const u8,
     ) !Registry {
-        var this: Registry = try .init(allocator);
+        var this: Registry = .init(allocator);
         if (std.mem.endsWith(u8, path, ".safetensors")) {
             try this.parseFile(io, path);
         } else if (std.mem.endsWith(u8, path, ".safetensors.index.json")) {
