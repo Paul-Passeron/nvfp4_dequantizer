@@ -140,3 +140,18 @@ pub fn dequantRange(
         dequantBlock(bytes_slice, scale, inv_global, out_slice);
     }
 }
+
+pub const Tensor = struct {
+    weight_packed: *const st.Tensor,
+    weight_scale: *const st.Tensor,
+    weight_global_scale: *const st.Tensor,
+
+    pub fn from_registry(
+        registry: *const st.Registry,
+        base: []const u8,
+    ) !?Tensor {
+        _ = registry;
+        _ = base;
+        @panic("TODO");
+    }
+};
