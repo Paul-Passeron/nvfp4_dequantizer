@@ -517,3 +517,36 @@ test "try tensor reader" {
 // So a registry that holds the tensors with a map
 // Then I'll be able to change the tests to directly
 // query the `*Tensor`s, get readers, etc...
+
+pub const Registry = struct {
+    // Everything in the registry just lives as long
+    // as the registry does.
+    arena: std.heap.ArenaAllocator,
+    tensors: Tensors,
+
+    pub fn fromPath(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        path: []const u8,
+    ) !Registry {
+        _ = allocator;
+        _ = io;
+        _ = path;
+        @panic("TODO");
+    }
+
+    pub fn deinit(self: *Registry) void {
+        self.arena.deinit();
+    }
+
+    pub fn get(
+        self: *const Registry,
+        name: []const u8,
+    ) ?*const Tensor {
+        return self.tensors.getPtr(name);
+    }
+
+    pub fn count(self: *const Registry) usize {
+        return self.tensors.count();
+    }
+};
