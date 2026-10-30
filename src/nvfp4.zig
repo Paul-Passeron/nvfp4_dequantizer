@@ -146,13 +146,43 @@ pub const Tensor = struct {
     weight_scale: *const st.Tensor,
     weight_global_scale: *const st.Tensor,
 
+    fn get_tensor_from_registry(
+        a: std.mem.Allocator,
+        registry: *const st.Registry,
+        base: []const u8,
+        comptime end: []const u8,
+    ) error{MissingTensorInfo}!*const st.Tensor {
+        const weight_packed_name =
+            std.fmt.allocPrint(a, "{s}." ++ end, .{base}) catch unreachable;
+        const weight_packed = registry.get(weight_packed_name) orelse
+            return error.MissingTensorInfo;
+        return weight_packed;
+    }
+
     pub fn from_registry(
         registry: *const st.Registry,
         base: []const u8,
-    ) !?Tensor {
-        _ = registry;
-        _ = base;
-        @panic("TODO");
+    ) error{MissingTensorInfo}!?Tensor {
+        var scratch_b: [512]u8 = undefined;
+        var scratch: std.heap.FixedBufferAllocator = .init(&scratch_b);
+        const a = scratch.allocator();
+
+        const weight_packed =
+            try get_tensor_from_registry(a, registry, base, "weight_packed");
+
+        scratch.reset();
+        const weight_scale =
+            try get_tensor_from_registry(a, registry, base, "weight_scale");
+
+        scratch.reset();
+        const weight_global_scale =
+            try get_tensor_from_registry(a, registry, base, "weight_global_scale");
+
+        return .{
+            .weight_packed = weight_packed,
+            .weight_scale = weight_scale,
+            .weight_global_scale = weight_global_scale,
+        };
     }
 
     pub fn shape(self: *const Tensor) [2]u64 {
@@ -173,6 +203,18 @@ pub const Tensor = struct {
         return TensorReader.init(io, self, buffers);
     }
 };
+
+test "can get tensor from registry" {
+    const a = std.testing.allocator;
+    const filename = "nvfp4/model.safetensors";
+    const base = "model.layers.0.self_attn.q_proj";
+    var threaded: std.Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg: st.Registry = try .fromPath(a, io, filename);
+    defer reg.deinit();
+    _ = try Tensor.from_registry(&reg, base);
+}
 
 pub const TensorReader = struct {
     fn init(
