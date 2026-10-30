@@ -290,4 +290,29 @@ pub const Tensor = struct {
     // we don't store the header length etc...
     offset: u64,
     byte_len: u64,
+
+    pub fn readScalarUnchecked(
+        self: *const Tensor,
+        io: std.Io,
+        comptime T: type,
+    ) !T {
+        _ = self;
+        _ = io;
+        @panic("TODO");
+    }
+
+    pub fn readScalar(
+        self: *const Tensor,
+        io: std.Io,
+        comptime T: type,
+    ) error{WrongDataType}!T {
+        if (self.dtype != expectedDataType(T)) {
+            return error.WrongDataType;
+        }
+        if (self.byte_len != @sizeOf(T)) {
+            return error.WrongLength;
+        }
+
+        return self.readScalarUnchecked(self, io);
+    }
 };
