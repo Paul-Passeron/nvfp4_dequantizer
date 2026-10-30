@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const DataType = enum { U8, U16, U32, U64, F8, F16, F32, F64, BF16, F8_E4M3 };
+pub const DataType = enum { U8, U16, U32, U64, F16, F32, F64, BF16, F8_E4M3 };
 
 pub const RawTensorInfo = struct {
     dtype: DataType,
