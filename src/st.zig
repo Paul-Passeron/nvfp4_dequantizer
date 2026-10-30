@@ -540,7 +540,11 @@ pub const Registry = struct {
         path: []const u8,
     ) !Registry {
         var this: Registry = .init(allocator);
-        try this.parseFile(io, path);
+        if (std.mem.endsWith(u8, path, ".safetensors")) {
+            try this.parseFile(io, path);
+        } else if (std.mem.endsWith(u8, path, ".safetensors.index.json")) {
+            @panic("TODO: handle index files");
+        }
         return this;
     }
 
