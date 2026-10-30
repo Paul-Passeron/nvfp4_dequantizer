@@ -228,6 +228,7 @@ test "can get tensor from registry" {
 const BLOCK_COUNT = 16;
 const DEQUANT_BLOCK_BYTE_LEN = @sizeOf(f32) * BLOCK_COUNT;
 const PACKED_PER_BLOCK = BLOCK_COUNT / 2; // 2 u4 s packed in a byte
+const CHUNK_BLOCKS = 256;
 
 pub const TensorReader = struct {
     packed_reader: st.TensorReader,
@@ -278,11 +279,41 @@ pub const TensorReader = struct {
 
         if (blocks_to_write == 0) {
             const packed_bytes: [PACKED_PER_BLOCK]u8 = undefined;
-            _ = packed_bytes;
-            @panic("TODO: read a single block inside pending block");
+            var scale: [1]u8 = undefined;
+            try self.readInputs(packed_bytes, &scale);
+            dequantBlock(packed_bytes, scale, self.inv_global, &self.pending);
+            self.remaining_blocks = -1;
+            const n = try io_writer.write(limit.slice(pending_bytes));
+            self.pending_index = n;
+            return n;
         }
 
-        @panic("TODO: Handle the general case, i.e. reading at least one new block");
+        const k: usize = @intCast(@min(
+            blocks_to_write,
+            CHUNK_BLOCKS,
+            self.remaining_blocks,
+        ));
+
+        var packed_bytes: [CHUNK_BLOCKS * PACKED_PER_BLOCK]u8 = undefined;
+        var scales: [CHUNK_BLOCKS]u8 = undefined;
+        var out: [CHUNK_BLOCKS * BLOCK_COUNT]f32 = undefined;
+        try self.readInputs(&packed_bytes, &scales);
+        dequantRange(
+            packed_bytes[0 .. k * PACKED_PER_BLOCK],
+            scales[0..k],
+            self.inv_global,
+            out[0 .. k * BLOCK_COUNT],
+        ) catch unreachable;
+
+        const n = k * DEQUANT_BLOCK_BYTE_LEN;
+        // we know that n fits because
+        // n = k * DEQUANT_BLOCK_BYTE_LEN and k <= blocks_to_write
+        // and blocks_to_write = dest.len / DEQUANT_BLOCK_BYTE_LEN
+        // so n <= dest.len
+        @memcpy(dest[0..n], std.mem.sliceAsBytes(out[0 .. k * BLOCK_COUNT]));
+        io_writer.advance(n);
+        self.remaining_blocks -= k;
+        return n;
     }
 
     fn readInputs(self: *TensorReader, packed_bytes: []u8, scales: []u8) !void {
