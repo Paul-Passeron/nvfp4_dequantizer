@@ -472,3 +472,43 @@ pub const TensorReader = struct {
         self.file.close(self.io);
     }
 };
+
+test "try tensor reader" {
+
+    // FIXME: Don't use File to open the tensor
+    const allocator = std.heap.c_allocator;
+    const filename = "nvfp4/model.safetensors";
+    const tensor = "model.layers.0.self_attn.q_proj.weight_scale";
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var f = try File.open(io, allocator, filename);
+    defer f.close();
+
+    var it = f.iterator();
+    var found_info: ?*const TensorInfo = null;
+    while (it.next()) |info| {
+        if (std.mem.eql(u8, info.name, tensor)) {
+            found_info = info;
+        }
+    }
+    const info = found_info orelse return error.DidntFindTensor;
+
+    var t: Tensor = .{
+        .name = tensor,
+        .path = filename,
+        .dtype = info.dtype,
+        .shape = info.shape,
+        .offset = info.offset + f.headerOffsetBytes(),
+        .byte_len = info.byte_len,
+    };
+
+    const ts = std.testing;
+
+    var buffer: [4096]u8 = undefined;
+    var reader: TensorReader = try .init(io, &t, &buffer);
+    var r = &reader.interface;
+    const remaining = try r.allocRemaining(allocator, .unlimited);
+    try ts.expectEqual(remaining.len, info.byte_len);
+}
