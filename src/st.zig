@@ -371,6 +371,11 @@ test "readScalar works" {
     _ = try t.readScalar(io, f32);
 }
 
+pub const Buffers = struct {
+    file: []u8,
+    interface: []u8 = &.{},
+};
+
 pub const TensorReader = struct {
     io: std.Io,
     file: std.Io.File,
@@ -441,13 +446,13 @@ pub const TensorReader = struct {
         return discarded;
     }
 
-    fn initInterface(buffer: ?[]u8) std.Io.Reader {
+    fn initInterface(buffer: []u8) std.Io.Reader {
         return .{
             .vtable = &.{
                 .stream = stream,
                 .discard = discard,
             },
-            .buffer = buffer orelse &.{},
+            .buffer = buffer,
             .seek = 0,
             .end = 0,
         };
@@ -456,23 +461,16 @@ pub const TensorReader = struct {
     pub fn init(
         io: std.Io,
         tensor: *const Tensor,
-        buffer: []u8,
+        buffers: Buffers,
     ) !TensorReader {
-        var own_buffer: ?[]u8 = null;
-        var file_buffer = buffer;
-        if (buffer.len > 128) {
-            own_buffer = buffer[0..128];
-            file_buffer = buffer[128..];
-        }
-
         var file = try std.Io.Dir.cwd().openFile(io, tensor.path, .{
             .mode = .read_only,
         });
         errdefer file.close(io);
 
-        var file_reader = file.reader(io, file_buffer);
+        var file_reader = file.reader(io, buffers.file);
         try file_reader.seekTo(tensor.offset);
-        const interface = initInterface(own_buffer);
+        const interface = initInterface(buffers.interface);
 
         return .{
             .io = io,
@@ -521,8 +519,12 @@ test "try tensor reader" {
 
     const ts = std.testing;
 
-    var buffer: [4096]u8 = undefined;
-    var reader: TensorReader = try .init(io, &t, &buffer);
+    var buffer_file: [4096]u8 = undefined;
+    var buffer_interface: [4096]u8 = undefined;
+    var reader: TensorReader = try .init(io, &t, .{
+        .file = &buffer_file,
+        .interface = &buffer_interface,
+    });
     defer reader.deinit();
     var r = &reader.interface;
     const remaining = try r.allocRemaining(allocator, .unlimited);
@@ -660,10 +662,14 @@ test "can get a reader out of all tensors" {
     defer reg.deinit();
     try std.testing.expect(reg.count() > 0);
     var it = reg.iterator();
-    var buffer: [4096]u8 = undefined;
+    var buffer_file: [4096]u8 = undefined;
+    var buffer_interface: [4096]u8 = undefined;
     while (it.next()) |t| {
         var r: TensorReader =
-            try .init(io, t.value_ptr, &buffer);
+            try .init(io, t.value_ptr, .{
+                .file = &buffer_file,
+                .interface = &buffer_interface,
+            });
         defer r.deinit();
     }
 }
@@ -678,11 +684,15 @@ test "can read out of all tensors" {
     defer reg.deinit();
     try std.testing.expect(reg.count() > 0);
     var it = reg.iterator();
-    var buffer: [4096]u8 = undefined;
+    var buffer_file: [4096]u8 = undefined;
+    var buffer_interface: [4096]u8 = undefined;
     var w: std.Io.Writer.Discarding = .init(&.{});
     while (it.next()) |t| {
         var r: TensorReader =
-            try .init(io, t.value_ptr, &buffer);
+            try .init(io, t.value_ptr, .{
+                .file = &buffer_file,
+                .interface = &buffer_interface,
+            });
         defer r.deinit();
         const n = try r.interface.streamRemaining(&w.writer);
         try std.testing.expectEqual(t.value_ptr.byte_len, n);
@@ -705,17 +715,17 @@ test "both ways to read agree" {
 
     var r_it = reg.iterator();
 
-    var buffer: [4096]u8 = undefined;
+    var buffer_file: [4096]u8 = undefined;
+    var buffer_interface: [4096]u8 = undefined;
 
     while (r_it.next()) |r_val| {
         // Only look at f32 tensors
         if (r_val.value_ptr.dtype != .F32) continue;
 
-        var r_tr: TensorReader = try .init(
-            io,
-            r_val.value_ptr,
-            &buffer,
-        );
+        var r_tr: TensorReader = try .init(io, r_val.value_ptr, .{
+            .file = &buffer_file,
+            .interface = &buffer_interface,
+        });
         defer r_tr.deinit();
 
         var f_br = try file.tensor(
