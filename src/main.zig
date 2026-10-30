@@ -3,7 +3,7 @@ const nvfp4 = @import("nvfp4");
 const st = @import("st");
 const Io = std.Io;
 const Clock = Io.Clock;
-// const print = std.debug.print;
+const print = std.debug.print;
 
 test "nvfp4 and f32 are close enough" {
     const a = std.testing.allocator;
@@ -154,7 +154,7 @@ fn print_names(
     defer reg.deinit();
     var it = reg.iterator();
     while (it.next()) |t| {
-        std.debug.print("{s}\n", .{t.value_ptr.name});
+        print("{s}\n", .{t.value_ptr.name});
     }
 }
 
@@ -166,11 +166,11 @@ pub fn main() !void {
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
 
-    std.debug.print("`benchmark` took {f}\n", .{
+    print("`benchmark` took {f}\n", .{
         try benchmark(filename, tensor, allocator),
     });
 
-    std.debug.print("`benchmark_with_reader_one_at_a_time` took {f}\n", .{
+    print("`benchmark_with_reader_one_at_a_time` took {f}\n", .{
         try benchmark_with_reader_one_at_a_time(
             filename,
             tensor,
@@ -178,7 +178,7 @@ pub fn main() !void {
         ),
     });
 
-    std.debug.print(
+    print(
         "`benchmark_with_reader_into_writer` took {f}\n",
         .{try benchmark_with_reader_into_writer(
             filename,
@@ -197,7 +197,7 @@ pub fn main() !void {
         io,
         filename,
     );
-    std.debug.print("\n\n", .{});
+    print("\n\n", .{});
     try print_names(
         allocator,
         io,
