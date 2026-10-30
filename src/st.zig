@@ -299,6 +299,8 @@ pub const Tensor = struct {
         var file = try std.Io.Dir.cwd().openFile(io, self.path, .{
             .mode = .read_only,
         });
+        defer file.close(io);
+
         var buffer: [@sizeOf(T)]u8 = undefined;
         var reader = file.reader(io, &buffer);
         try reader.seekTo(self.offset);
@@ -427,6 +429,9 @@ pub const TensorReader = struct {
         self: *TensorReader,
         limit: std.Io.Limit,
     ) error{ EndOfStream, ReadFailed }!usize {
+        if (self.remaining == 0) {
+            return error.EndOfStream;
+        }
         const actual_limit = limit.min(.limited(self.remaining));
         const discarded = try self
             .file_reader
@@ -436,13 +441,13 @@ pub const TensorReader = struct {
         return discarded;
     }
 
-    fn initInterface() std.Io.Reader {
+    fn initInterface(buffer: ?[]u8) std.Io.Reader {
         return .{
             .vtable = &.{
                 .stream = stream,
                 .discard = discard,
             },
-            .buffer = &.{},
+            .buffer = buffer orelse &.{},
             .seek = 0,
             .end = 0,
         };
@@ -453,11 +458,21 @@ pub const TensorReader = struct {
         tensor: *const Tensor,
         buffer: []u8,
     ) !TensorReader {
+        var own_buffer: ?[]u8 = null;
+        var file_buffer = buffer;
+        if (buffer.len > 128) {
+            own_buffer = buffer[0..128];
+            file_buffer = buffer[128..];
+        }
+
         var file = try std.Io.Dir.cwd().openFile(io, tensor.path, .{
             .mode = .read_only,
         });
-        const file_reader = file.reader(io, buffer);
-        const interface = initInterface();
+        errdefer file.close(io);
+
+        var file_reader = file.reader(io, file_buffer);
+        try file_reader.seekTo(tensor.offset);
+        const interface = initInterface(own_buffer);
 
         return .{
             .io = io,
@@ -508,6 +523,7 @@ test "try tensor reader" {
 
     var buffer: [4096]u8 = undefined;
     var reader: TensorReader = try .init(io, &t, &buffer);
+    defer reader.deinit();
     var r = &reader.interface;
     const remaining = try r.allocRemaining(allocator, .unlimited);
     try ts.expectEqual(remaining.len, info.byte_len);
@@ -527,10 +543,9 @@ pub const Registry = struct {
     pub fn init(
         allocator: std.mem.Allocator,
     ) !Registry {
-        var arena: std.heap.ArenaAllocator = .init(allocator);
         return .{
-            .arena = arena,
-            .tensors = try .init(arena.allocator(), &.{}, &.{}),
+            .arena = .init(allocator),
+            .tensors = .empty,
         };
     }
 
@@ -576,6 +591,8 @@ pub const Registry = struct {
         var file = try std.Io.Dir.cwd().openFile(io, path, .{
             .mode = .read_only,
         });
+        defer file.close(io);
+
         var read_buf: [4096]u8 = undefined;
         var reader: std.Io.File.Reader = file.reader(io, &read_buf);
         const n = try reader.interface.takeInt(u64, .little);
@@ -596,11 +613,12 @@ pub const Registry = struct {
         var it = root.object.iterator();
         while (it.next()) |entry| {
             // TODO: What to do with metadata ?
-            // Keep it as a raw JSON object ?
-            // Do something else ?
+            // - Keep it as a raw JSON object ?
+            // - Do something else ?
             if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
-            // TODO: Have RawTensor and RawTensorInfo be types
-            // local to this function, or at least to the registry
+
+            // TODO: Have RawTensorInfo be types local to this function,
+            // or at least to the registry
             const raw_info = try std.json.parseFromValueLeaky(
                 RawTensorInfo,
                 a,
@@ -610,7 +628,7 @@ pub const Registry = struct {
 
             const t: Tensor = .{
                 .name = entry.key_ptr.*,
-                .path = path,
+                .path = try self.arena.allocator().dupe(u8, path),
                 .shape = raw_info.shape,
                 .dtype = raw_info.dtype,
                 .offset = raw_info.data_offsets[0] + 8 + n,
