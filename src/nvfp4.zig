@@ -153,20 +153,21 @@ fn split_bytes_into_nibbles(
 }
 
 fn e2m1Range(
-    packed_bytes: *const [8]u8,
-) @Vector(16, f32) {
-    const V32 = @Vector(16, u32);
-    const bytes: @Vector(8, u8) = packed_bytes.*;
-    const v: V32 = split_bytes_into_nibbles(8, u32, bytes);
-    const s: V32 = (v >> @splat(3)) & @as(V32, @splat(1));
-    const e1 = (v >> @splat(2)) & @as(V32, @splat(1));
-    const e0 = (v >> @splat(1)) & @as(V32, @splat(1));
-    const m = v & @as(V32, @splat(1));
-    const t = ~e1 & (e0 | m) & @as(V32, @splat(1));
-    var tt = t | (t << @as(V32, @splat(1)));
+    comptime n: comptime_int,
+    packed_bytes: *const [n * 8]u8,
+) @Vector(n * 16, f32) {
+    const V = @Vector(n * 16, u32);
+    const bytes: @Vector(n * 8, u8) = packed_bytes.*;
+    const v: V = split_bytes_into_nibbles(n * 8, u32, bytes);
+    const s: V = (v >> @splat(3)) & @as(V, @splat(1));
+    const e1 = (v >> @splat(2)) & @as(V, @splat(1));
+    const e0 = (v >> @splat(1)) & @as(V, @splat(1));
+    const m = v & @as(V, @splat(1));
+    const t = ~e1 & (e0 | m) & @as(V, @splat(1));
+    var tt = t | (t << @as(V, @splat(1)));
     tt |= tt << @splat(2);
     tt |= tt << @splat(4);
-    const exp = (e1 << @splat(7)) | (tt & @as(V32, @splat(0b0111_1110))) | e0;
+    const exp = (e1 << @splat(7)) | (tt & @as(V, @splat(0b0111_1110))) | e0;
     const bits = (s << @splat(31)) | (exp << @splat(23)) | ((m & (e0 | e1)) << @splat(22));
     return @bitCast(bits);
 }
@@ -174,7 +175,7 @@ fn e2m1Range(
 test "e2m1" {
     const values: [8]u8 = .{ 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90 };
     const split: [16]u4 = .{ 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0 };
-    const res = e2m1Range(&values);
+    const res = e2m1Range(1, &values);
     const simd: [16]f32 = res;
     for (simd, split) |a, b| {
         const decode = decodeE2M1(b);
