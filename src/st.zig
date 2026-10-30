@@ -34,231 +34,6 @@ pub const TensorInfo = struct {
     byte_len: usize,
 };
 
-pub const Metadata = struct {};
-
-pub const SafeTensorHeader = struct {
-    arena: std.heap.ArenaAllocator,
-
-    tensors: []TensorInfo,
-    metadata: Metadata,
-
-    const Self = @This();
-
-    pub fn deinit(self: *Self) void {
-        self.arena.deinit();
-    }
-
-    pub fn fromJSON(allocator: std.mem.Allocator, blob: []const u8) !Self {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        errdefer arena.deinit();
-        const a = arena.allocator();
-
-        const root = try std.json.parseFromSliceLeaky(
-            std.json.Value,
-            a,
-            blob,
-            .{ .allocate = .alloc_always },
-        );
-
-        var tensors: std.ArrayList(TensorInfo) = .empty;
-        var it = root.object.iterator();
-        while (it.next()) |entry| {
-            if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
-            const raw: RawTensor = .{
-                .name = entry.key_ptr.*,
-                .info = try std.json.parseFromValueLeaky(RawTensorInfo, a, entry.value_ptr.*, .{}),
-            };
-            const info = raw.into_tensorInfo();
-            try tensors.append(a, info);
-        }
-
-        return .{
-            .tensors = try tensors.toOwnedSlice(a),
-            .metadata = .{},
-            .arena = arena,
-        };
-    }
-};
-
-pub const File = struct {
-    const Self = @This();
-
-    n: usize,
-    header: SafeTensorHeader,
-    io: std.Io,
-    file: std.Io.File,
-
-    const READ_BUFFER_CAP = 4096;
-
-    pub fn open(
-        io: std.Io,
-        allocator: std.mem.Allocator,
-        path: []const u8,
-    ) !Self {
-        var file = try std.Io.Dir.cwd().openFile(io, path, .{
-            .mode = .read_only,
-        });
-
-        var read_buf: [READ_BUFFER_CAP]u8 = undefined;
-        var reader: std.Io.File.Reader = file.reader(io, &read_buf);
-
-        const n = try reader.interface.takeInt(u64, .little);
-
-        const json_blob = try reader.interface.readAlloc(allocator, n);
-        defer allocator.free(json_blob);
-
-        const header = try SafeTensorHeader.fromJSON(allocator, json_blob);
-
-        return .{ .header = header, .io = io, .file = file, .n = n };
-    }
-
-    pub fn close(self: *Self) void {
-        self.file.close(self.io);
-        self.header.deinit();
-    }
-
-    pub fn count(self: *Self) usize {
-        return self.header.tensors.len;
-    }
-
-    pub fn headerOffsetBytes(self: *const Self) usize {
-        return self.n + 8;
-    }
-
-    pub fn iterator(self: *const Self) Iterator {
-        return .{
-            .index = 0,
-            .f = self,
-        };
-    }
-
-    pub fn readBytes(self: *const Self, a: std.mem.Allocator, info: *const TensorInfo) ![]u8 {
-        var read_buf: [READ_BUFFER_CAP]u8 = undefined;
-
-        var reader: std.Io.File.Reader = self.file.reader(self.io, &read_buf);
-        try reader.seekTo(self.headerOffsetBytes() + info.offset);
-
-        const res = try reader.interface.readAllocAll(a, info.byte_len);
-
-        return res;
-    }
-
-    pub fn readScalar(self: *const Self, comptime T: type, info: *const TensorInfo) !T {
-        // TODO: not sure this is even REMOTELY correct ^^'
-        var read_buf: [@sizeOf(T)]u8 = undefined;
-        var bytes: [@sizeOf(T)]u8 = undefined;
-
-        var reader: std.Io.File.Reader = self.file.reader(self.io, &read_buf);
-        try reader.seekTo(self.headerOffsetBytes() + info.offset);
-
-        try reader.interface.readSliceAll(&bytes);
-
-        return @bitCast(std.mem.readInt(
-            @Int(.unsigned, @bitSizeOf(T)),
-            &bytes,
-            .little,
-        ));
-    }
-
-    pub const Iterator = struct {
-        index: usize,
-        f: *const File,
-
-        pub fn next(self: *@This()) ?*const TensorInfo {
-            if (self.f.header.tensors.len <= self.index) {
-                return null;
-            }
-            const info = &self.f.header.tensors[self.index];
-            self.index += 1;
-            return info;
-        }
-
-        pub fn reset(self: *@This()) void {
-            self.index = 0;
-        }
-    };
-
-    pub fn tensorFromInfo(
-        self: *const Self,
-        comptime T: type,
-        infos: *const TensorInfo,
-    ) !?BasicTensor(T) {
-        return .{
-            .weights = infos,
-            .file = self,
-        };
-    }
-
-    pub fn tensor(
-        self: *const Self,
-        comptime T: type,
-        name: []const u8,
-    ) error{WrongDataType}!?BasicTensor(T) {
-        var infos: ?*const TensorInfo = null;
-        var it = self.iterator();
-        while (it.next()) |info| {
-            if (!std.mem.eql(u8, info.name, name)) {
-                continue;
-            }
-            if (info.dtype != expectedDataType(T)) {
-                return error.WrongDataType;
-            }
-            infos = info;
-            break;
-        }
-        const i = infos orelse return null;
-        return self.tensorFromInfo(T, i);
-    }
-
-    pub fn BasicTensor(comptime T: type) type {
-        return struct {
-            weights: *const TensorInfo,
-            file: *const File,
-
-            const ThisRawTensor = @This();
-
-            pub fn reader(
-                self: *const ThisRawTensor,
-                a: std.mem.Allocator,
-            ) !BlockReader {
-                const buffer = try a.alloc(u8, READ_BUFFER_CAP);
-                errdefer a.free(buffer);
-                var r = self.file.file.reader(self.file.io, buffer);
-                try r.seekTo(self.file.headerOffsetBytes() + self.weights.offset);
-                return .{
-                    .r = r,
-                    .buffer = buffer,
-                    .a = a,
-                    .tensor = self,
-                    .i = 0,
-                };
-            }
-
-            pub const BlockReader = struct {
-                r: std.Io.File.Reader,
-                buffer: []u8,
-                a: std.mem.Allocator,
-                tensor: *const ThisRawTensor,
-                i: usize,
-
-                pub fn deinit(self: *BlockReader) void {
-                    self.a.free(self.buffer);
-                }
-
-                pub fn next(self: *BlockReader) !?T {
-                    if (self.i >= self.tensor.weights.byte_len) {
-                        return null;
-                    }
-                    var res: [1]T = undefined;
-                    try self.r.interface.readSliceAll(@ptrCast(&res));
-                    self.i += @sizeOf(T);
-                    return res[0];
-                }
-            };
-        };
-    }
-};
-
 fn expectedDataType(comptime T: type) ?DataType {
     switch (T) {
         f16 => return .F16,
@@ -344,27 +119,9 @@ test "readScalar works" {
     var threaded: std.Io.Threaded = .init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
-
-    var f = try File.open(io, allocator, filename);
-    defer f.close();
-
-    var it = f.iterator();
-    var found_info: ?*const TensorInfo = null;
-    while (it.next()) |info| {
-        if (std.mem.eql(u8, info.name, tensor)) {
-            found_info = info;
-        }
-    }
-    const info = found_info orelse return error.DidntFindTensor;
-
-    var t: Tensor = .{
-        .name = tensor,
-        .path = filename,
-        .dtype = info.dtype,
-        .shape = info.shape,
-        .offset = info.offset + f.headerOffsetBytes(),
-        .byte_len = info.byte_len,
-    };
+    var r = try Registry.fromPath(allocator, io, filename);
+    defer r.deinit();
+    var t = r.get(tensor) orelse return error.DidntFindTensor;
     try std.testing.expectError(error.WrongDataType, t.readScalar(io, u8));
     try std.testing.expectError(error.WrongDataType, t.readScalar(io, u16));
     try std.testing.expectError(error.WrongDataType, t.readScalar(io, u32));
@@ -499,39 +256,22 @@ test "try tensor reader" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var f = try File.open(io, allocator, filename);
-    defer f.close();
-
-    var it = f.iterator();
-    var found_info: ?*const TensorInfo = null;
-    while (it.next()) |info| {
-        if (std.mem.eql(u8, info.name, tensor)) {
-            found_info = info;
-        }
-    }
-    const info = found_info orelse return error.DidntFindTensor;
-
-    var t: Tensor = .{
-        .name = tensor,
-        .path = filename,
-        .dtype = info.dtype,
-        .shape = info.shape,
-        .offset = info.offset + f.headerOffsetBytes(),
-        .byte_len = info.byte_len,
-    };
+    var reg = try Registry.fromPath(allocator, io, filename);
+    defer reg.deinit();
+    const t = reg.get(tensor) orelse return error.DidntFindTensor;
 
     const ts = std.testing;
 
     var buffer_file: [4096]u8 = undefined;
     var buffer_interface: [4096]u8 = undefined;
-    var reader: TensorReader = try .init(io, &t, .{
+    var reader: TensorReader = try .init(io, t, .{
         .file = &buffer_file,
         .interface = &buffer_interface,
     });
     defer reader.deinit();
     var r = &reader.interface;
     const remaining = try r.allocRemaining(allocator, .unlimited);
-    try ts.expectEqual(remaining.len, info.byte_len);
+    try ts.expectEqual(remaining.len, t.byte_len);
 }
 
 // Trying to do it kind of like the ZML framework
@@ -699,65 +439,5 @@ test "can read out of all tensors" {
         defer r.deinit();
         const n = try r.interface.streamRemaining(&w.writer);
         try std.testing.expectEqual(t.value_ptr.byte_len, n);
-    }
-}
-
-test "both ways to read the same bytes" {
-    const a = std.testing.allocator;
-    const filename = "converted_f32/model-00001-of-00001.safetensors";
-    var threaded: std.Io.Threaded = .init(a, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var reg: Registry = try .fromPath(a, io, filename);
-    defer reg.deinit();
-
-    var file = try File.open(io, a, filename);
-    defer file.close();
-
-    var buffer_file: [4096]u8 = undefined;
-    var buffer_interface: [4096]u8 = undefined;
-
-    var chunk_old: [64 * 1024]u8 = undefined;
-    var chunk_new: [64 * 1024]u8 = undefined;
-
-    const max_tensors_to_test: usize = 10;
-    var count: usize = 0;
-
-    var r_it = reg.iterator();
-
-    while (r_it.next()) |r_val| {
-        // Only look at f32 tensors
-        if (r_val.value_ptr.dtype != .F32) continue;
-
-        if (count >= max_tensors_to_test) {
-            break;
-        }
-        count += 1;
-
-        var r_tr: TensorReader = try .init(io, r_val.value_ptr, .{
-            .file = &buffer_file,
-            .interface = &buffer_interface,
-        });
-        defer r_tr.deinit();
-
-        var f_br = try file.tensor(
-            f32,
-            r_val.value_ptr.name,
-        ) orelse return error.MissingTensor;
-        var f_br_r = try f_br.reader(a);
-        defer f_br_r.deinit();
-
-        var left = r_val.value_ptr.byte_len;
-        while (left > 0) {
-            const n = @min(left, chunk_old.len);
-            try f_br_r.r.interface.readSliceAll(chunk_old[0..n]);
-            try r_tr.interface.readSliceAll(chunk_new[0..n]);
-            try std.testing.expectEqualSlices(u8, chunk_old[0..n], chunk_new[0..n]);
-            left -= n;
-        }
-
-        // The new reader must stop exactly at the end of the tensor.
-        try std.testing.expectError(error.EndOfStream, r_tr.interface.takeByte());
     }
 }
