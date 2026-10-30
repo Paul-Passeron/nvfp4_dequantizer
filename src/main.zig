@@ -144,6 +144,20 @@ fn benchmark_with_reader_into_writer(
     return start.durationTo(end);
 }
 
+fn print_names(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    path: []const u8,
+) !void {
+    var reg: st.Registry =
+        try .fromPath(allocator, io, path);
+    defer reg.deinit();
+    var it = reg.iterator();
+    while (it.next()) |t| {
+        std.debug.print("{s}\n", .{t.value_ptr.name});
+    }
+}
+
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
     const filename = "nvfp4/model.safetensors";
@@ -172,5 +186,21 @@ pub fn main() !void {
             allocator,
             &aw.writer,
         )},
+    );
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try print_names(
+        allocator,
+        io,
+        filename,
+    );
+    std.debug.print("\n\n", .{});
+    try print_names(
+        allocator,
+        io,
+        "converted_f32/model-00001-of-00001.safetensors",
     );
 }
