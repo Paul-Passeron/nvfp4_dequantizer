@@ -526,11 +526,11 @@ pub const Registry = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-    ) Registry {
-        const arena: std.heap.ArenaAllocator = .init(allocator);
+    ) !Registry {
+        var arena: std.heap.ArenaAllocator = .init(allocator);
         return .{
             .arena = arena,
-            .tensors = .init(arena.allocator, &.{}, &.{}),
+            .tensors = try .init(arena.allocator(), &.{}, &.{}),
         };
     }
 
@@ -539,7 +539,7 @@ pub const Registry = struct {
         io: std.Io,
         path: []const u8,
     ) !Registry {
-        var this: Registry = .init(allocator);
+        var this: Registry = try .init(allocator);
         if (std.mem.endsWith(u8, path, ".safetensors")) {
             try this.parseFile(io, path);
         } else if (std.mem.endsWith(u8, path, ".safetensors.index.json")) {
@@ -572,9 +572,101 @@ pub const Registry = struct {
         io: std.Io,
         path: []const u8,
     ) !void {
-        _ = self;
-        _ = io;
-        _ = path;
-        @panic("TODO");
+        const a = self.arena.allocator();
+        var file = try std.Io.Dir.cwd().openFile(io, path, .{
+            .mode = .read_only,
+        });
+        var read_buf: [4096]u8 = undefined;
+        var reader: std.Io.File.Reader = file.reader(io, &read_buf);
+        const n = try reader.interface.takeInt(u64, .little);
+        const json_blob = try reader.interface.readAlloc(a, n);
+        // TODO: this uses the arena allocator so freeing it might not
+        // do anything... Fine for now I guess but should be aware of
+        // that I think. Either we should keep the child allocator in
+        // the registry for that exact reason or we should do something
+        // else...
+        defer a.free(json_blob);
+
+        const root = try std.json.parseFromSliceLeaky(
+            std.json.Value,
+            a,
+            json_blob,
+            .{ .allocate = .alloc_always },
+        );
+        var it = root.object.iterator();
+        while (it.next()) |entry| {
+            // TODO: What to do with metadata ?
+            // Keep it as a raw JSON object ?
+            // Do something else ?
+            if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
+            // TODO: Have RawTensor and RawTensorInfo be types
+            // local to this function, or at least to the registry
+            const raw_info = try std.json.parseFromValueLeaky(
+                RawTensorInfo,
+                a,
+                entry.value_ptr.*,
+                .{},
+            );
+
+            const t: Tensor = .{
+                .name = entry.key_ptr.*,
+                .path = path,
+                .shape = raw_info.shape,
+                .dtype = raw_info.dtype,
+                .offset = raw_info.data_offsets[0] + 8 + n,
+                .byte_len = raw_info.data_offsets[1] - raw_info.data_offsets[0],
+            };
+            try self.tensors.put(a, t.name, t);
+        }
     }
 };
+
+test "try init registry from a path" {
+    const a = std.heap.c_allocator;
+    const filename = "nvfp4/model.safetensors";
+    var threaded: std.Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var r: Registry = try .fromPath(a, io, filename);
+    try std.testing.expect(r.count() > 0);
+    defer r.deinit();
+}
+
+test "can get a reader out of all tensors" {
+    const a = std.heap.c_allocator;
+    const filename = "nvfp4/model.safetensors";
+    var threaded: std.Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg: Registry = try .fromPath(a, io, filename);
+    defer reg.deinit();
+    try std.testing.expect(reg.count() > 0);
+    var it = reg.iterator();
+    var buffer: [4096]u8 = undefined;
+    while (it.next()) |t| {
+        var r: TensorReader =
+            try .init(io, t.value_ptr, &buffer);
+        defer r.deinit();
+    }
+}
+
+test "can read out of all tensors" {
+    const a = std.heap.c_allocator;
+    const filename = "nvfp4/model.safetensors";
+    var threaded: std.Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg: Registry = try .fromPath(a, io, filename);
+    defer reg.deinit();
+    try std.testing.expect(reg.count() > 0);
+    var it = reg.iterator();
+    var buffer: [4096]u8 = undefined;
+    var w: std.Io.Writer.Discarding = .init(&.{});
+    while (it.next()) |t| {
+        var r: TensorReader =
+            try .init(io, t.value_ptr, &buffer);
+        defer r.deinit();
+        const n = try r.interface.streamRemaining(&w.writer);
+        try std.testing.expectEqual(t.value_ptr.byte_len, n);
+    }
+}
