@@ -512,3 +512,8 @@ test "try tensor reader" {
     const remaining = try r.allocRemaining(allocator, .unlimited);
     try ts.expectEqual(remaining.len, info.byte_len);
 }
+
+// Trying to do it kind of like the ZML framework
+// So a registry that holds the tensors with a map
+// Then I'll be able to change the tests to directly
+// query the `*Tensor`s, get readers, etc...
