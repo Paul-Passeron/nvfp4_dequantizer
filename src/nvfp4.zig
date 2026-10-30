@@ -227,6 +227,7 @@ test "can get tensor from registry" {
 
 const BLOCK_COUNT = 16;
 const DEQUANT_BLOCK_BYTE_LEN = @sizeOf(f32) * BLOCK_COUNT;
+const PACKED_PER_BLOCK = BLOCK_COUNT / 2; // 2 u4 s packed in a byte
 
 pub const TensorReader = struct {
     packed_reader: st.TensorReader,
@@ -276,10 +277,19 @@ pub const TensorReader = struct {
         const blocks_to_write = dest.len / DEQUANT_BLOCK_BYTE_LEN;
 
         if (blocks_to_write == 0) {
-            @panic("TODO: the block doesn't fit");
+            const packed_bytes: [PACKED_PER_BLOCK]u8 = undefined;
+            _ = packed_bytes;
+            @panic("TODO: read a single block inside pending block");
         }
 
         @panic("TODO: Handle the general case, i.e. reading at least one new block");
+    }
+
+    fn readInputs(self: *TensorReader, packed_bytes: []u8, scales: []u8) !void {
+        _ = self;
+        _ = packed_bytes;
+        _ = scales;
+        @panic("TODO: Read as much as possible inside packed_bytes and scales");
     }
 
     fn initInterface(buffer: []u8) std.Io.Reader {
