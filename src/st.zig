@@ -368,3 +368,66 @@ test "readScalar works" {
     try std.testing.expectError(error.WrongDataType, t.readScalar(io, f64));
     _ = try t.readScalar(io, f32);
 }
+
+pub const TensorReader = struct {
+    io: std.Io,
+    file: std.Io.File,
+    file_reader: std.Io.File.Reader,
+    remaining: u64,
+    interface: std.Io.Reader,
+
+    fn stream(
+        io_reader: *std.Io.Reader,
+        io_writer: *std.Io.Writer,
+        limit: std.Io.Limit,
+    ) !usize {
+        const r: *TensorReader = @alignCast(
+            @fieldParentPtr("interface", io_reader),
+        );
+        return r.read_impl(io_writer, limit);
+    }
+
+    fn read_impl(
+        self: *TensorReader,
+        io_writer: *std.Io.Writer,
+        limit: std.Io.Limit,
+    ) std.Io.Reader.StreamError!usize {
+        _ = self;
+        _ = io_writer;
+        _ = limit;
+        @panic("TODO");
+    }
+
+    fn initInterface() std.Io.Reader {
+        return .{
+            .vtable = &.{ .stream = stream },
+            .buffer = &.{},
+            .seek = 0,
+            .end = 0,
+        };
+    }
+
+    pub fn init(
+        io: std.Io,
+        tensor: *const Tensor,
+        buffer: []u8,
+    ) !TensorReader {
+        var file = try std.Io.Dir.cwd().openFile(io, tensor.path, .{
+            .mode = .read_only,
+        });
+        const file_reader = file.reader(io, buffer);
+        const interface = initInterface();
+
+        return .{
+            .io = io,
+            .file = file,
+            .file_reader = file_reader,
+            .remaining = tensor.byte_len,
+            .interface = interface,
+        };
+    }
+
+    pub fn deinit(self: *TensorReader) void {
+        self.file.close(self.io);
+    }
+};
