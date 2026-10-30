@@ -257,11 +257,21 @@ pub const TensorReader = struct {
         io_writer: *std.Io.Writer,
         limit: std.Io.Limit,
     ) std.Io.Reader.StreamError!usize {
-        _ = self;
-        _ = io_writer;
-        _ = limit;
 
-        @panic("TODO");
+        // Handle last block if it still hasn't been completely read
+        const pending_bytes: []u8 = std.mem.asBytes(&self.pending);
+        if (self.pending_index < pending_bytes.len) {
+            const n = try io_writer.write(limit.slice(pending_bytes[self.pending_index..]));
+            self.pending_index += n;
+            return n;
+        }
+
+        // No pending block so if no remaining blocks then we truly are at the end
+        if (self.remaining_blocks == 0) {
+            return error.EndOfStream;
+        }
+
+        @panic("TODO: Handle the general case, i.e. reading a new block");
     }
 
     fn initInterface(buffer: []u8) std.Io.Reader {
