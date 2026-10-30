@@ -317,17 +317,16 @@ pub const TensorReader = struct {
     }
 
     fn readInputs(self: *TensorReader, packed_bytes: []u8, scales: []u8) !void {
-        self.packed_reader.interface.readSliceAll(packed_bytes) catch |e| {
-            switch (e) {
-                error.EndOfStream => return error.ReadFailed,
-                else => return e,
-            }
-        };
-        self.scale_reader.interface.readSliceAll(scales) catch |e| {
-            switch (e) {
-                error.EndOfStream => return error.ReadFailed,
-                else => return e,
-            }
+        self.packed_reader.interface.readSliceAll(packed_bytes) catch |e|
+            return mapErr(e);
+        self.scale_reader.interface.readSliceAll(scales) catch |e|
+            return mapErr(e);
+    }
+
+    fn mapErr(e: std.Io.Reader.Error) std.Io.Reader.Error {
+        return switch (e) {
+            error.EndOfStream => error.ReadFailed,
+            else => e,
         };
     }
 
