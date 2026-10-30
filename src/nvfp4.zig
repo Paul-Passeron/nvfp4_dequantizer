@@ -125,11 +125,13 @@ pub const NVFP4Tensor = struct {
 
     pub const BlockReader = struct {
         global_scale: f32,
-        block_scale_reader: std.Io.File.Reader,
-        packed_reader: std.Io.File.Reader,
 
         block_scale_buffer: []u8,
+        block_scale_reader: std.Io.File.Reader,
+
         packed_buffer: []u8,
+        packed_reader: std.Io.File.Reader,
+
         allocator: std.mem.Allocator,
 
         layer: *NVFP4Tensor,
