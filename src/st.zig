@@ -380,7 +380,7 @@ pub const TensorReader = struct {
         io_reader: *std.Io.Reader,
         io_writer: *std.Io.Writer,
         limit: std.Io.Limit,
-    ) !usize {
+    ) std.Io.Reader.StreamError!usize {
         const r: *TensorReader = @alignCast(
             @fieldParentPtr("interface", io_reader),
         );
@@ -392,10 +392,25 @@ pub const TensorReader = struct {
         io_writer: *std.Io.Writer,
         limit: std.Io.Limit,
     ) std.Io.Reader.StreamError!usize {
-        _ = self;
-        _ = io_writer;
-        _ = limit;
-        @panic("TODO");
+        if (self.remaining == 0) {
+            return std.Io.Reader.StreamError.EndOfStream;
+        }
+        const actual_limit = limit.min(.limited(self.remaining));
+        const read = try self
+            .file_reader
+            .interface
+            .stream(io_writer, actual_limit);
+        self.advance_by(read);
+        return read;
+    }
+
+    fn advance_by(self: *TensorReader, byte_count: usize) void {
+        if (byte_count > self.remaining) {
+            // TODO: This shouldn't be allowed ?
+            self.remaining = 0;
+        } else {
+            self.remaining -= byte_count;
+        }
     }
 
     fn discard(
@@ -412,9 +427,13 @@ pub const TensorReader = struct {
         self: *TensorReader,
         limit: std.Io.Limit,
     ) std.Io.Reader.StreamError!usize {
-        _ = self;
-        _ = limit;
-        @panic("TODO");
+        const actual_limit = limit.min(.limited(self.remaining));
+        const discarded = try self
+            .file_reader
+            .interface
+            .discard(actual_limit);
+        self.advance_by(discarded);
+        return discarded;
     }
 
     fn initInterface() std.Io.Reader {
