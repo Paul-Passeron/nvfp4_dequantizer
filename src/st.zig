@@ -524,15 +524,24 @@ pub const Registry = struct {
     arena: std.heap.ArenaAllocator,
     tensors: Tensors,
 
+    pub fn init(
+        allocator: std.mem.Allocator,
+    ) Registry {
+        const arena: std.heap.ArenaAllocator = .init(allocator);
+        return .{
+            .arena = arena,
+            .tensors = .init(arena.allocator, &.{}, &.{}),
+        };
+    }
+
     pub fn fromPath(
         allocator: std.mem.Allocator,
         io: std.Io,
         path: []const u8,
     ) !Registry {
-        _ = allocator;
-        _ = io;
-        _ = path;
-        @panic("TODO");
+        var this: Registry = .init(allocator);
+        try this.parseFile(io, path);
+        return this;
     }
 
     pub fn deinit(self: *Registry) void {
@@ -548,5 +557,20 @@ pub const Registry = struct {
 
     pub fn count(self: *const Registry) usize {
         return self.tensors.count();
+    }
+
+    pub fn iterator(self: *const Registry) Tensors.Iterator {
+        return self.tensors.iterator();
+    }
+
+    fn parseFile(
+        self: *Registry,
+        io: std.Io,
+        path: []const u8,
+    ) !void {
+        _ = self;
+        _ = io;
+        _ = path;
+        @panic("TODO");
     }
 };
