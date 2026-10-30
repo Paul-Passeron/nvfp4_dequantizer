@@ -296,9 +296,19 @@ pub const Tensor = struct {
         io: std.Io,
         comptime T: type,
     ) !T {
-        _ = self;
-        _ = io;
-        @panic("TODO");
+        var file = try std.Io.Dir.cwd().openFile(io, self.path, .{
+            .mode = .read_only,
+        });
+        const buffer = [@sizeOf(T)]u8;
+        const reader = file.reader(io, &buffer);
+        try reader.seekTo(self.offset);
+        const r = &reader.interface;
+        const n = try r.take(@sizeOf(T));
+        if (n != @sizeOf(T)) {
+            return error.ReadFailed;
+        }
+        const reinterpreted: []T = std.mem.bytesAsSlice(T, &buffer);
+        return reinterpreted[0];
     }
 
     pub fn readScalar(
