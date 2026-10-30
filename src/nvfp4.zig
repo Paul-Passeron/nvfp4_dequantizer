@@ -198,8 +198,10 @@ pub const Tensor = struct {
     }
 
     pub fn dequantByteLen(self: *const Tensor) u64 {
-        _ = self;
-        @panic("TODO");
+        // 2 samples per u8 (u4 + u4)
+        // and then 32 bits per f32 sample (=4 bytes)
+        // so packed byte len * 8
+        return self.weight_packed * 8;
     }
 
     pub fn reader(
