@@ -192,8 +192,9 @@ pub const Tensor = struct {
     }
 
     pub fn shape(self: *const Tensor) [2]u64 {
-        _ = self;
-        @panic("TODO");
+        const n = self.weight_packed.shape[0];
+        const k = self.weight_packed.shape[1] * 2;
+        return .{ n, k };
     }
 
     pub fn dequantByteLen(self: *const Tensor) u64 {
