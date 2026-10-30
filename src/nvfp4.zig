@@ -297,7 +297,7 @@ pub const TensorReader = struct {
         var packed_bytes: [CHUNK_BLOCKS * PACKED_PER_BLOCK]u8 = undefined;
         var scales: [CHUNK_BLOCKS]u8 = undefined;
         var out: [CHUNK_BLOCKS * BLOCK_COUNT]f32 = undefined;
-        try self.readInputs(&packed_bytes, &scales);
+        try self.readInputs(packed_bytes[0 .. k * PACKED_PER_BLOCK], scales[0..k]);
         dequantRange(
             packed_bytes[0 .. k * PACKED_PER_BLOCK],
             scales[0..k],
