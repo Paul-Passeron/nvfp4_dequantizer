@@ -201,13 +201,13 @@ pub const Tensor = struct {
         // 2 samples per u8 (u4 + u4)
         // and then 32 bits per f32 sample (=4 bytes)
         // so packed byte len * 8
-        return self.weight_packed * 8;
+        return self.weight_packed.byte_len * 8;
     }
 
     pub fn reader(
         self: *const Tensor,
         io: std.Io,
-        buffers: st.TensorReader.Buffers,
+        buffers: TensorReader.Buffers,
     ) !TensorReader {
         return TensorReader.init(io, self, buffers);
     }
@@ -278,11 +278,11 @@ pub const TensorReader = struct {
         const blocks_to_write = dest.len / DEQUANT_BLOCK_BYTE_LEN;
 
         if (blocks_to_write == 0) {
-            const packed_bytes: [PACKED_PER_BLOCK]u8 = undefined;
+            var packed_bytes: [PACKED_PER_BLOCK]u8 = undefined;
             var scale: [1]u8 = undefined;
-            try self.readInputs(packed_bytes, &scale);
-            dequantBlock(packed_bytes, scale, self.inv_global, &self.pending);
-            self.remaining_blocks = -1;
+            try self.readInputs(&packed_bytes, &scale);
+            dequantBlock(&packed_bytes, scale[0], self.inv_global, &self.pending);
+            self.remaining_blocks -= 1;
             const n = try io_writer.write(limit.slice(pending_bytes));
             self.pending_index = n;
             return n;
@@ -335,7 +335,7 @@ pub const TensorReader = struct {
             .buffer = buffer,
             .end = 0,
             .seek = 0,
-            .vtable = .{
+            .vtable = &.{
                 .stream = stream,
             },
         };
@@ -351,12 +351,12 @@ pub const TensorReader = struct {
         tensor: *const Tensor,
         buffers: Buffers,
     ) !TensorReader {
-        const packed_reader: st.TensorReader = .init(
+        const packed_reader: st.TensorReader = try .init(
             io,
             tensor.weight_packed,
             .{ .file = buffers.packed_bytes },
         );
-        const scale_reader: st.TensorReader = .init(
+        const scale_reader: st.TensorReader = try .init(
             io,
             tensor.weight_scale,
             .{ .file = buffers.scales },
