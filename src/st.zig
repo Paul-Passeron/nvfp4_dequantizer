@@ -398,9 +398,31 @@ pub const TensorReader = struct {
         @panic("TODO");
     }
 
+    fn discard(
+        io_reader: *std.Io.Reader,
+        limit: std.Io.Limit,
+    ) !usize {
+        const r: *TensorReader = @alignCast(
+            @fieldParentPtr("interface", io_reader),
+        );
+        return r.read_impl(limit);
+    }
+
+    fn discard_impl(
+        self: *TensorReader,
+        limit: std.Io.Limit,
+    ) std.Io.Reader.StreamError!usize {
+        _ = self;
+        _ = limit;
+        @panic("TODO");
+    }
+
     fn initInterface() std.Io.Reader {
         return .{
-            .vtable = &.{ .stream = stream },
+            .vtable = &.{
+                .stream = stream,
+                .discard = discard,
+            },
             .buffer = &.{},
             .seek = 0,
             .end = 0,
