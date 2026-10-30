@@ -374,17 +374,17 @@ test "readScalar works" {
     _ = try t.readScalar(io, f32);
 }
 
-pub const Buffers = struct {
-    file: []u8,
-    interface: []u8 = &.{},
-};
-
 pub const TensorReader = struct {
     io: std.Io,
     file: std.Io.File,
     file_reader: std.Io.File.Reader,
     remaining: u64,
     interface: std.Io.Reader,
+
+    pub const Buffers = struct {
+        file: []u8,
+        interface: []u8 = &.{},
+    };
 
     fn stream(
         io_reader: *std.Io.Reader,
