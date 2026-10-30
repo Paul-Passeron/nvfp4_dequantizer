@@ -226,6 +226,7 @@ test "can get tensor from registry" {
 }
 
 const BLOCK_COUNT = 16;
+const DEQUANT_BLOCK_BYTE_LEN = @sizeOf(f32) * BLOCK_COUNT;
 
 pub const TensorReader = struct {
     packed_reader: st.TensorReader,
@@ -271,7 +272,14 @@ pub const TensorReader = struct {
             return error.EndOfStream;
         }
 
-        @panic("TODO: Handle the general case, i.e. reading a new block");
+        const dest = limit.slice(try io_writer.writableSliceGreedy(1));
+        const blocks_to_write = dest.len / DEQUANT_BLOCK_BYTE_LEN;
+
+        if (blocks_to_write == 0) {
+            @panic("TODO: the block doesn't fit");
+        }
+
+        @panic("TODO: Handle the general case, i.e. reading at least one new block");
     }
 
     fn initInterface(buffer: []u8) std.Io.Reader {
