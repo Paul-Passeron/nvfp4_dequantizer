@@ -178,19 +178,6 @@ pub const File = struct {
         }
     };
 
-    fn expectedDataType(comptime T: type) ?DataType {
-        switch (T) {
-            f16 => return .F16,
-            f32 => return .F32,
-            f64 => return .F64,
-            u8 => return .U8,
-            u16 => return .U16,
-            u32 => return .U32,
-            u64 => return .U64,
-            else => return null,
-        }
-    }
-
     pub fn tensorFromInfo(
         self: *const Self,
         comptime T: type,
@@ -271,6 +258,19 @@ pub const File = struct {
         };
     }
 };
+
+fn expectedDataType(comptime T: type) ?DataType {
+    switch (T) {
+        f16 => return .F16,
+        f32 => return .F32,
+        f64 => return .F64,
+        u8 => return .U8,
+        u16 => return .U16,
+        u32 => return .U32,
+        u64 => return .U64,
+        else => return null,
+    }
+}
 
 // New API (test)
 
