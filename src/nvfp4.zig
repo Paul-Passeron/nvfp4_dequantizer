@@ -159,7 +159,8 @@ pub const Tensor = struct {
         return weight_packed;
     }
 
-    pub fn from_registry(
+    /// returns null when couldn't find `<base>.weight_packed` tensor
+    pub fn fromRegistry(
         registry: *const st.Registry,
         base: []const u8,
     ) error{MissingTensorInfo}!?Tensor {
@@ -168,7 +169,12 @@ pub const Tensor = struct {
         const a = scratch.allocator();
 
         const weight_packed =
-            try get_tensor_from_registry(a, registry, base, "weight_packed");
+            get_tensor_from_registry(
+                a,
+                registry,
+                base,
+                "weight_packed",
+            ) orelse return null;
 
         scratch.reset();
         const weight_scale =
