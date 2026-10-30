@@ -295,27 +295,32 @@ pub const Tensor = struct {
         self: *const Tensor,
         io: std.Io,
         comptime T: type,
-    ) !T {
+    ) Errors!T {
         var file = try std.Io.Dir.cwd().openFile(io, self.path, .{
             .mode = .read_only,
         });
-        const buffer = [@sizeOf(T)]u8;
-        const reader = file.reader(io, &buffer);
+        var buffer: [@sizeOf(T)]u8 = undefined;
+        var reader = file.reader(io, &buffer);
         try reader.seekTo(self.offset);
         const r = &reader.interface;
-        const n = try r.take(@sizeOf(T));
-        if (n != @sizeOf(T)) {
+        const slice = try r.take(@sizeOf(T));
+        if (slice.len != @sizeOf(T)) {
             return error.ReadFailed;
         }
-        const reinterpreted: []T = std.mem.bytesAsSlice(T, &buffer);
+        const reinterpreted: []T = @alignCast(std.mem.bytesAsSlice(T, slice));
         return reinterpreted[0];
     }
+
+    const Errors = std.Io.File.OpenError ||
+        std.Io.File.Reader.Error ||
+        std.Io.File.Reader.SeekError ||
+        error{ WrongDataType, WrongLength };
 
     pub fn readScalar(
         self: *const Tensor,
         io: std.Io,
         comptime T: type,
-    ) error{WrongDataType}!T {
+    ) Errors!T {
         if (self.dtype != expectedDataType(T)) {
             return error.WrongDataType;
         }
@@ -323,6 +328,43 @@ pub const Tensor = struct {
             return error.WrongLength;
         }
 
-        return self.readScalarUnchecked(self, io);
+        return self.readScalarUnchecked(io, T);
     }
 };
+
+test "readScalar works" {
+    const allocator = std.heap.c_allocator;
+    const filename = "nvfp4/model.safetensors";
+    const tensor = "model.layers.0.self_attn.q_proj.weight_global_scale";
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var f = try File.open(io, allocator, filename);
+    defer f.close();
+
+    var it = f.iterator();
+    var found_info: ?*const TensorInfo = null;
+    while (it.next()) |info| {
+        if (std.mem.eql(u8, info.name, tensor)) {
+            found_info = info;
+        }
+    }
+    const info = found_info orelse return error.DidntFindTensor;
+
+    var t: Tensor = .{
+        .name = tensor,
+        .path = filename,
+        .dtype = info.dtype,
+        .shape = info.shape,
+        .offset = info.offset + f.headerOffsetBytes(),
+        .byte_len = info.byte_len,
+    };
+    try std.testing.expectError(error.WrongDataType, t.readScalar(io, u8));
+    try std.testing.expectError(error.WrongDataType, t.readScalar(io, u16));
+    try std.testing.expectError(error.WrongDataType, t.readScalar(io, u32));
+    try std.testing.expectError(error.WrongDataType, t.readScalar(io, u64));
+    try std.testing.expectError(error.WrongDataType, t.readScalar(io, f16));
+    try std.testing.expectError(error.WrongDataType, t.readScalar(io, f64));
+    _ = try t.readScalar(io, f32);
+}
