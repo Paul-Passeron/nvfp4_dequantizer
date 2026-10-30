@@ -339,7 +339,7 @@ pub const TensorReader = struct {
         };
     }
 
-    fn deinit(self: *TensorReader) void {
+    pub fn deinit(self: *TensorReader) void {
         self.packed_reader.deinit();
         self.scale_reader.deinit();
     }
