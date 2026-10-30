@@ -640,7 +640,7 @@ pub const Registry = struct {
 };
 
 test "try init registry from a path" {
-    const a = std.heap.c_allocator;
+    const a = std.testing.allocator;
     const filename = "nvfp4/model.safetensors";
     var threaded: std.Io.Threaded = .init(a, .{});
     defer threaded.deinit();
@@ -651,7 +651,7 @@ test "try init registry from a path" {
 }
 
 test "can get a reader out of all tensors" {
-    const a = std.heap.c_allocator;
+    const a = std.testing.allocator;
     const filename = "nvfp4/model.safetensors";
     var threaded: std.Io.Threaded = .init(a, .{});
     defer threaded.deinit();
@@ -669,7 +669,7 @@ test "can get a reader out of all tensors" {
 }
 
 test "can read out of all tensors" {
-    const a = std.heap.c_allocator;
+    const a = std.testing.allocator;
     const filename = "nvfp4/model.safetensors";
     var threaded: std.Io.Threaded = .init(a, .{});
     defer threaded.deinit();
@@ -686,5 +686,49 @@ test "can read out of all tensors" {
         defer r.deinit();
         const n = try r.interface.streamRemaining(&w.writer);
         try std.testing.expectEqual(t.value_ptr.byte_len, n);
+    }
+}
+
+// TODO: this test is very slow because we read values one by one!
+test "both ways to read agree" {
+    const a = std.testing.allocator;
+    const filename = "converted_f32/model-00001-of-00001.safetensors";
+    var threaded: std.Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var reg: Registry = try .fromPath(a, io, filename);
+    defer reg.deinit();
+
+    var file = try File.open(io, a, filename);
+    defer file.close();
+
+    var r_it = reg.iterator();
+
+    var buffer: [4096]u8 = undefined;
+
+    while (r_it.next()) |r_val| {
+        // Only look at f32 tensors
+        if (r_val.value_ptr.dtype != .F32) continue;
+
+        var r_tr: TensorReader = try .init(
+            io,
+            r_val.value_ptr,
+            &buffer,
+        );
+        defer r_tr.deinit();
+
+        var f_br = try file.tensor(
+            f32,
+            r_val.value_ptr.name,
+        ) orelse return error.MissingTensor;
+        var f_br_r = try f_br.reader(a);
+        defer f_br_r.deinit();
+
+        while (try f_br_r.next()) |value| {
+            const other: u32 =
+                try r_tr.interface.takeInt(u32, .little);
+            try std.testing.expectEqual(other, @as(u32, @bitCast(value)));
+        }
     }
 }
