@@ -174,7 +174,7 @@ pub const Tensor = struct {
                 registry,
                 base,
                 "weight_packed",
-            ) orelse return null;
+            ) catch return null;
 
         scratch.reset();
         const weight_scale =
@@ -222,17 +222,88 @@ test "can get tensor from registry" {
     const io = threaded.io();
     var reg: st.Registry = try .fromPath(a, io, filename);
     defer reg.deinit();
-    _ = try Tensor.from_registry(&reg, base);
+    _ = try Tensor.fromRegistry(&reg, base);
 }
 
+const BLOCK_COUNT = 16;
+
 pub const TensorReader = struct {
+    packed_reader: st.TensorReader,
+    scale_reader: st.TensorReader,
+    inv_global: f32,
+    remaining_blocks: u64,
+    pending: [BLOCK_COUNT]f32 = undefined,
+    pending_index: usize = @sizeOf([BLOCK_COUNT]f32),
+
+    interface: std.Io.Reader,
+
+    pub const Buffers = struct {
+        packed_bytes: []u8,
+        scales: []u8,
+        interface: []u8 = &.{},
+    };
+
+    fn stream(
+        io_reader: *std.Io.Reader,
+        io_writer: *std.Io.Writer,
+        limit: std.Io.Limit,
+    ) std.Io.Reader.StreamError!usize {
+        var this: *TensorReader = @fieldParentPtr("interface", io_reader);
+        return this.streamImpl(io_writer, limit);
+    }
+
+    fn streamImpl(
+        self: *TensorReader,
+        io_writer: *std.Io.Writer,
+        limit: std.Io.Limit,
+    ) std.Io.Reader.StreamError!usize {
+        _ = self;
+        _ = io_writer;
+        _ = limit;
+
+        @panic("TODO");
+    }
+
+    fn initInterface(buffer: []u8) std.Io.Reader {
+        return .{
+            .buffer = buffer,
+            .end = 0,
+            .seek = 0,
+            .vtable = .{
+                .stream = stream,
+            },
+        };
+    }
+
+    fn deinit(self: *TensorReader) void {
+        self.packed_reader.deinit();
+        self.scale_reader.deinit();
+    }
+
     fn init(
         io: std.Io,
         tensor: *const Tensor,
-        buffers: st.TensorReader.Buffers,
+        buffers: Buffers,
     ) !TensorReader {
-        _ = io;
-        _ = tensor;
-        _ = buffers;
+        const packed_reader: st.TensorReader = .init(
+            io,
+            tensor.weight_packed,
+            .{ .file = buffers.packed_bytes },
+        );
+        const scale_reader: st.TensorReader = .init(
+            io,
+            tensor.weight_scale,
+            .{ .file = buffers.scales },
+        );
+        const inv_global = try tensor.weight_global_scale.readScalar(io, f32);
+
+        const remaining_blocks = tensor.weight_scale.byte_len;
+        return .{
+            .packed_reader = packed_reader,
+            .scale_reader = scale_reader,
+            .inv_global = inv_global,
+            .remaining_blocks = remaining_blocks,
+            .interface = initInterface(buffers.interface),
+        };
     }
 };
