@@ -271,3 +271,23 @@ pub const File = struct {
         };
     }
 };
+
+// New API (test)
+
+// Have a map from name to tensors
+pub const Tensors = std.StringArrayHashMapUnmanaged(Tensor);
+
+// Mostly the same as TensorInfo but has its path
+pub const Tensor = struct {
+    name: []const u8,
+    // file path of the safetensor shard that contains it
+    path: []const u8,
+
+    dtype: DataType,
+    shape: []const u64,
+
+    // offset directly in the file, not from header so
+    // we don't store the header length etc...
+    offset: u64,
+    byte_len: u64,
+};
