@@ -373,3 +373,65 @@ pub const TensorReader = struct {
         };
     }
 };
+
+test "nvfp4 and f32 are the same" {
+    const a = std.testing.allocator;
+    const base = "model.layers.0.self_attn.q_proj";
+    var threaded: std.Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var nvfp4_reg: st.Registry = try .fromPath(a, io, "nvfp4/model.safetensors");
+    defer nvfp4_reg.deinit();
+    var f32_reg: st.Registry = try .fromPath(
+        a,
+        io,
+        "converted_f32/model-00001-of-00001.safetensors",
+    );
+    defer f32_reg.deinit();
+
+    const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
+        return error.MissingTensor;
+    const expected = f32_reg.get(base ++ ".weight") orelse
+        return error.MissingTensor;
+
+    try std.testing.expectEqual(st.DataType.F32, expected.dtype);
+    try std.testing.expectEqualSlices(u64, expected.shape, &t.shape());
+    try std.testing.expectEqual(expected.byte_len, t.dequantByteLen());
+
+    var packed_buffer: [4096]u8 = undefined;
+    var scales_buffer: [4096]u8 = undefined;
+    var actual_reader = try t.reader(io, .{
+        .packed_bytes = &packed_buffer,
+        .scales = &scales_buffer,
+    });
+    defer actual_reader.deinit();
+
+    var expected_buffer: [4096]u8 = undefined;
+    var expected_reader: st.TensorReader = try .init(io, expected, .{
+        .file = &expected_buffer,
+    });
+    defer expected_reader.deinit();
+
+    var actual_chunk: [64 * 1024]u8 align(@alignOf(f32)) = undefined;
+    var expected_chunk: [64 * 1024]u8 align(@alignOf(f32)) = undefined;
+
+    var left = expected.byte_len;
+    while (left > 0) {
+        const n: usize = @intCast(@min(left, actual_chunk.len));
+        try actual_reader.interface.readSliceAll(actual_chunk[0..n]);
+        try expected_reader.interface.readSliceAll(expected_chunk[0..n]);
+
+        const actual_values: []f32 = std.mem.bytesAsSlice(f32, actual_chunk[0..n]);
+        const expected_values: []f32 = std.mem.bytesAsSlice(f32, expected_chunk[0..n]);
+        for (expected_values, actual_values) |e, v| {
+            try std.testing.expectApproxEqRel(e, v, 1e-3);
+        }
+        left -= n;
+    }
+
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try actual_reader.interface.discardRemaining(),
+    );
+}
