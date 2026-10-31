@@ -197,22 +197,21 @@ fn e4m3RangeImpl(
     bytes: *const [n]u8,
 ) @Vector(n, f32) {
     const V = @Vector(n, u32);
+    const B = @Vector(n, bool);
+    const S = @Vector(n, u5);
     const x: @Vector(n, u32) = bytes.*;
     const sign: V = (x & splat(V, 0x80)) << @splat(24);
     const e: V = (x >> @splat(3)) & splat(V, 0xF);
     const m: V = x & splat(V, 0x7);
-    const normal: V = ((e + splat(V, 120)) << splat(@Vector(n, u5), 23)) |
-        (m << splat(@Vector(n, u5), 20));
-    const p: @Vector(n, u5) = @intCast(splat(V, 31) - @clz(m | splat(V, 1)));
-    const subnormal: V = ((splat(V, 118) + @as(V, p)) << splat(@Vector(n, u5), 23)) |
-        (((m << (splat(@Vector(n, u5), 3) - p)) & splat(V, 0x7)) << splat(@Vector(n, u5), 20));
-    const not_is_normal: V = @intFromBool(e == splat(V, 0));
-    const is_normal: V = @intFromBool(@as(@Vector(n, bool), e != splat(V, 0)));
-    const is_sub: V = @intFromBool((m != splat(V, 0))) & not_is_normal;
-    const magnitude: V = normal * is_normal + subnormal * is_sub;
-    const is_nan: V = @intFromBool((e == splat(V, 0xF)) & (m == splat(V, 0x7)));
-    const not_is_nan: V = @intFromBool(is_nan == splat(V, 0));
-    const or_mask = is_nan * splat(V, 0x7FC0_0000) + (not_is_nan) * magnitude;
+    const normal: V = ((e + splat(V, 120)) << splat(S, 23)) |
+        (m << splat(S, 20));
+    const p: S = @intCast(splat(V, 31) - @clz(m | splat(V, 1)));
+    const subnormal: V = ((splat(V, 118) + @as(V, p)) << splat(S, 23)) |
+        (((m << (splat(S, 3) - p)) & splat(V, 0x7)) << splat(S, 20));
+    const subnormal_or_zero: V = @select(u32, m == splat(V, 0), subnormal, splat(V, 0));
+    const magnitude: V = @select(u32, e == splat(V, 0), subnormal_or_zero, normal);
+    const is_nan: B = (e == splat(V, 0xF)) & (m == splat(V, 0x7));
+    const or_mask = @select(u32, is_nan, splat(V, 0x7FC0_0000), magnitude);
     const res: V = sign | or_mask;
     return @bitCast(res);
 }
