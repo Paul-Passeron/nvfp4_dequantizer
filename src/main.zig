@@ -10,6 +10,7 @@ fn benchmark(
     io: std.Io,
     filename: []const u8,
     base: []const u8,
+    algo: nvfp4.DequantAlgo,
 ) !std.Io.Duration {
     var aw: Io.Writer.Allocating = .init(a);
     defer aw.deinit();
@@ -27,7 +28,7 @@ fn benchmark(
     var reader = try t.reader(io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
-    }, .simd);
+    }, algo);
     defer reader.deinit();
 
     _ = try reader.interface.streamRemaining(&aw.writer);
@@ -42,10 +43,19 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    print("benchmark took {f}\n", .{try benchmark(
+    print("Sequential benchmark took {f}\n", .{try benchmark(
         a,
         io,
         "nvfp4/model.safetensors",
         "model.layers.0.self_attn.q_proj",
+        .sequential,
+    )});
+
+    print("SIMD benchmark took {f}\n", .{try benchmark(
+        a,
+        io,
+        "nvfp4/model.safetensors",
+        "model.layers.0.self_attn.q_proj",
+        .simd,
     )});
 }

@@ -256,10 +256,9 @@ pub fn dequantRangeSimd(
     scales: []const u8,
     inv_global: f32,
     out: []f32,
-) error{InvalidDequantRanges}!void {
-    try checkDequantRangeInput(packed_bytes, scales, out);
+) void {
     var remaining_blocks: usize = scales.len;
-    const vec_lengths = [_]comptime_int{ 16, 1 };
+    const vec_lengths = [_]comptime_int{ 16, 8, 4, 2, 1 };
     inline for (vec_lengths) |C| {
         const global: @Vector(C * 16, f32) = @splat(inv_global);
         while (remaining_blocks >= C) {
@@ -285,12 +284,17 @@ pub fn dequantRange(
     inv_global: f32,
     out: []f32,
 ) error{InvalidDequantRanges}!void {
+    try checkDequantRangeInput(packed_bytes, scales, out);
     switch (algo) {
         .sequential => {
-            @panic("TODO: reimplement the old way");
+            for (scales, 0..) |scale, i| {
+                const bytes_slice = packed_bytes[i * 8 ..][0..8];
+                const out_slice = out[i * 16 ..][0..16];
+                dequantBlock(bytes_slice, scale, inv_global, out_slice);
+            }
         },
         .simd => {
-            try dequantRangeSimd(packed_bytes, scales, inv_global, out);
+            dequantRangeSimd(packed_bytes, scales, inv_global, out);
         },
     }
 }
