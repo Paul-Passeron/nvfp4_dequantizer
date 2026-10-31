@@ -148,7 +148,17 @@ fn split_bytes_into_nibbles(
     const mask: @Vector(n, u8) = @splat(0xF);
     const lo = bytes & mask;
     const hi = (bytes >> @splat(4)) & mask;
-    return std.simd.interlace(.{ lo, hi });
+
+    const indices = comptime blk: {
+        var idx: [n * 2]i32 = undefined;
+        for (0..n) |i| {
+            idx[2 * i + 0] = @intCast(i);
+            idx[2 * i + 1] = ~@as(i32, @intCast(i));
+        }
+        break :blk idx;
+    };
+    const interleaved: @Vector(n * 2, u8) = @shuffle(u8, lo, hi, indices);
+    return interleaved;
 }
 
 fn e2m1Range(
@@ -247,7 +257,7 @@ pub fn dequantRange(
 ) error{InvalidDequantRanges}!void {
     try checkDequantRangeInput(packed_bytes, scales, out);
     var remaining_blocks: usize = scales.len;
-    const vec_lengths: [6]comptime_int = .{ 32, 16, 8, 4, 2, 1 };
+    const vec_lengths = [_]comptime_int{ 16, 1 };
     inline for (vec_lengths) |C| {
         const global: @Vector(C * 16, f32) = @splat(inv_global);
         while (remaining_blocks >= C) {
