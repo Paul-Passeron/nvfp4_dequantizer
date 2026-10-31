@@ -79,7 +79,6 @@ test "decodeE2M1 covers all 16 values" {
     const expected = [16]f32{ 0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6 };
     for (expected, 0..) |e, i| try std.testing.expectEqual(e, decodeE2M1(@intCast(i)));
 }
-
 fn E4M3_from_parts(sign: u16, e: u16, m: u16) u16 {
     var bits: u16 = sign;
     if (e == 0b1111 and m == 0b111) {
@@ -232,25 +231,13 @@ fn e4m3Range(
     comptime n: comptime_int,
     bytes: *const [n]u8,
 ) @Vector(n * 16, f32) {
-    const res_v = e4m3RangeImpl(n, bytes);
-    return std.simd.interlace(.{
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-        res_v,
-    });
+    const scales = e4m3RangeImpl(n, bytes);
+    const mask = comptime blk: {
+        var indices: [n * 16]i32 = undefined;
+        for (&indices, 0..) |*index, i| index.* = @intCast(i / 16);
+        break :blk indices;
+    };
+    return @shuffle(f32, scales, undefined, mask);
 }
 
 pub fn dequantRange(
@@ -261,7 +248,7 @@ pub fn dequantRange(
 ) error{InvalidDequantRanges}!void {
     try checkDequantRangeInput(packed_bytes, scales, out);
     var remaining_blocks: usize = scales.len;
-    const vec_lengths: [4]comptime_int = .{ 8, 4, 2, 1 };
+    const vec_lengths: [6]comptime_int = .{ 32, 16, 8, 4, 2, 1 };
     inline for (vec_lengths) |C| {
         const global: @Vector(C * 16, f32) = @splat(inv_global);
         while (remaining_blocks >= C) {
