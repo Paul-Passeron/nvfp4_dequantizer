@@ -97,16 +97,11 @@ fn E4M3_from_parts(sign: u16, e: u16, m: u16) u16 {
 }
 
 pub fn decodeE4M3(byte: u8) f32 {
-    const x: u32 = byte;
-    const sign = (x & 0x80) << 24;
-    const e = (x >> 3) & 0xF;
-    const m = x & 0x7;
-    const normal = ((e + 120) << 23) | (m << 20);
-    const p: u5 = @intCast(31 - @clz(m | 1));
-    const subnormal = ((118 + @as(u32, p)) << 23) | (((m << (3 - p)) & 0x7) << 20);
-    const magnitude: u32 = if (e != 0) normal else if (m != 0) subnormal else 0;
-    const is_nan = e == 0xF and m == 0x7;
-    return @bitCast(sign | if (is_nan) @as(u32, 0x7FC0_0000) else magnitude);
+    const sign: u16 = @as(u16, byte >> 7) << 15;
+    const e: u16 = @as(u16, byte >> 3) & 0b1111;
+    const m: u16 = byte & 0b111;
+    const bits = E4M3_from_parts(sign, e, m);
+    return @as(f32, @as(f16, @bitCast(bits)));
 }
 
 pub fn unpack(byte: u8) [2]u4 {
