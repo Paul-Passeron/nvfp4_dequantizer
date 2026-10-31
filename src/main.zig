@@ -9,29 +9,39 @@ fn benchmark(
     a: std.mem.Allocator,
     io: std.Io,
     filename: []const u8,
-    base: []const u8,
     algo: nvfp4.DequantAlgo,
 ) !std.Io.Duration {
-    var aw: Io.Writer.Allocating = .init(a);
-    defer aw.deinit();
+    var buffer: [4096]u8 = undefined;
+    var aw: Io.Writer.Discarding = .init(&buffer);
+    // defer aw.deinit();
 
     var reg: st.Registry = try .fromPath(a, io, filename);
     defer reg.deinit();
 
-    const t = try nvfp4.Tensor.fromRegistry(&reg, base) orelse
-        return error.MissingTensor;
-
+    var tensors = std.ArrayList([]const u8).empty;
+    var it = reg.iterator();
+    while (it.next()) |t| {
+        if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
+            const val = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
+            try tensors.append(a, val);
+        }
+    }
     const start = Clock.real.now(io);
 
-    var packed_buffer: [4096]u8 = undefined;
-    var scales_buffer: [4096]u8 = undefined;
-    var reader = try t.reader(io, .{
-        .packed_bytes = &packed_buffer,
-        .scales = &scales_buffer,
-    }, algo);
-    defer reader.deinit();
+    for (tensors.items) |base| {
+        const t = try nvfp4.Tensor.fromRegistry(&reg, base) orelse
+            return error.MissingTensor;
 
-    _ = try reader.interface.streamRemaining(&aw.writer);
+        var packed_buffer: [4096]u8 = undefined;
+        var scales_buffer: [4096]u8 = undefined;
+        var reader = try t.reader(io, .{
+            .packed_bytes = &packed_buffer,
+            .scales = &scales_buffer,
+        }, algo);
+        defer reader.deinit();
+
+        _ = try reader.interface.streamRemaining(&aw.writer);
+    }
 
     const end = Clock.real.now(io);
     return start.durationTo(end);
@@ -47,7 +57,7 @@ pub fn main() !void {
         a,
         io,
         "nvfp4/model.safetensors",
-        "model.layers.0.self_attn.q_proj",
+        // "model.layers.0.self_attn.q_proj",
         .sequential,
     )});
 
@@ -55,7 +65,7 @@ pub fn main() !void {
         a,
         io,
         "nvfp4/model.safetensors",
-        "model.layers.0.self_attn.q_proj",
+        // "model.layers.0.self_attn.q_proj",
         .simd,
     )});
 }
