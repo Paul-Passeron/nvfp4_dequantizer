@@ -27,7 +27,7 @@ fn benchmark(
     var reader = try t.reader(io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
-    });
+    }, .simd);
     defer reader.deinit();
 
     _ = try reader.interface.streamRemaining(&aw.writer);

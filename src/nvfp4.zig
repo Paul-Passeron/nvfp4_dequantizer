@@ -249,7 +249,9 @@ fn e4m3Range(
     return @shuffle(f32, scales, undefined, mask);
 }
 
-pub fn dequantRange(
+pub const DequantAlgo = enum { sequential, simd };
+
+pub fn dequantRangeSimd(
     packed_bytes: []const u8,
     scales: []const u8,
     inv_global: f32,
@@ -273,6 +275,23 @@ pub fn dequantRange(
             remaining_blocks -= C;
         }
         if (remaining_blocks == 0) return;
+    }
+}
+
+pub fn dequantRange(
+    algo: DequantAlgo,
+    packed_bytes: []const u8,
+    scales: []const u8,
+    inv_global: f32,
+    out: []f32,
+) error{InvalidDequantRanges}!void {
+    switch (algo) {
+        .sequential => {
+            @panic("TODO: reimplement the old way");
+        },
+        .simd => {
+            try dequantRangeSimd(packed_bytes, scales, inv_global, out);
+        },
     }
 }
 
@@ -343,8 +362,9 @@ pub const Tensor = struct {
         self: *const Tensor,
         io: std.Io,
         buffers: TensorReader.Buffers,
+        algo: DequantAlgo,
     ) !TensorReader {
-        return TensorReader.init(io, self, buffers);
+        return TensorReader.init(io, self, buffers, algo);
     }
 };
 
@@ -372,6 +392,8 @@ pub const TensorReader = struct {
     remaining_blocks: u64,
     pending: [BLOCK_COUNT]f32 = undefined,
     pending_index: usize = @sizeOf([BLOCK_COUNT]f32),
+
+    algo: DequantAlgo,
 
     interface: std.Io.Reader,
 
@@ -434,6 +456,7 @@ pub const TensorReader = struct {
         var out: [CHUNK_BLOCKS * BLOCK_COUNT]f32 = undefined;
         try self.readInputs(packed_bytes[0 .. k * PACKED_PER_BLOCK], scales[0..k]);
         dequantRange(
+            self.algo,
             packed_bytes[0 .. k * PACKED_PER_BLOCK],
             scales[0..k],
             self.inv_global,
@@ -483,6 +506,7 @@ pub const TensorReader = struct {
         io: std.Io,
         tensor: *const Tensor,
         buffers: Buffers,
+        algo: DequantAlgo,
     ) !TensorReader {
         const packed_reader: st.TensorReader = try .init(
             io,
@@ -503,6 +527,7 @@ pub const TensorReader = struct {
             .inv_global = inv_global,
             .remaining_blocks = remaining_blocks,
             .interface = initInterface(buffers.interface),
+            .algo = algo,
         };
     }
 };
