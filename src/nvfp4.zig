@@ -218,7 +218,7 @@ fn e4m3RangeImpl(
     const p: S = @intCast(splat(V, 31) - @clz(m | splat(V, 1)));
     const subnormal: V = ((splat(V, 118) + @as(V, p)) << splat(S, 23)) |
         (((m << (splat(S, 3) - p)) & splat(V, 0x7)) << splat(S, 20));
-    const subnormal_or_zero: V = @select(u32, m == splat(V, 0), subnormal, splat(V, 0));
+    const subnormal_or_zero: V = @select(u32, m == splat(V, 0), splat(V, 0), subnormal);
     const magnitude: V = @select(u32, e == splat(V, 0), subnormal_or_zero, normal);
     const is_nan: B = (e == splat(V, 0xF)) & (m == splat(V, 0x7));
     const or_mask = @select(u32, is_nan, splat(V, 0x7FC0_0000), magnitude);
