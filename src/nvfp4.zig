@@ -97,11 +97,16 @@ fn E4M3_from_parts(sign: u16, e: u16, m: u16) u16 {
 }
 
 pub fn decodeE4M3(byte: u8) f32 {
-    const sign: u16 = @as(u16, byte >> 7) << 15;
-    const e: u16 = @as(u16, byte >> 3) & 0b1111;
-    const m: u16 = byte & 0b111;
-    const bits = E4M3_from_parts(sign, e, m);
-    return @as(f32, @as(f16, @bitCast(bits)));
+    const x: u32 = byte;
+    const sign = (x & 0x80) << 24;
+    const e = (x >> 3) & 0xF;
+    const m = x & 0x7;
+    const normal = ((e + 120) << 23) | (m << 20);
+    const p: u5 = @intCast(31 - @clz(m | 1));
+    const subnormal = ((118 + @as(u32, p)) << 23) | (((m << (3 - p)) & 0x7) << 20);
+    const magnitude: u32 = if (e != 0) normal else if (m != 0) subnormal else 0;
+    const is_nan = e == 0xF and m == 0x7;
+    return @bitCast(sign | if (is_nan) @as(u32, 0x7FC0_0000) else magnitude);
 }
 
 pub fn unpack(byte: u8) [2]u4 {
@@ -146,25 +151,25 @@ fn split_bytes_into_nibbles(
     comptime T: type,
     bytes: @Vector(n, u8),
 ) @Vector(n * 2, T) {
-    const mask: @Vector(8, u8) = @splat(0xF);
-    const hi = bytes & mask;
-    const lo = (bytes >> @splat(4)) & mask;
+    const mask: @Vector(n, u8) = @splat(0xF);
+    const lo = bytes & mask;
+    const hi = (bytes >> @splat(4)) & mask;
     return std.simd.interlace(.{ lo, hi });
 }
 
 fn e2m1Range(
     comptime n: comptime_int,
-    packed_bytes: *const [n * 8]u8,
-) @Vector(n * 16, f32) {
-    const V = @Vector(n * 16, u32);
-    const bytes: @Vector(n * 8, u8) = packed_bytes.*;
-    const v: V = split_bytes_into_nibbles(n * 8, u32, bytes);
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, f32) {
+    const V = @Vector(n * 2, u32);
+    const bytes: @Vector(n, u8) = packed_bytes.*;
+    const v: V = split_bytes_into_nibbles(n, u32, bytes);
     const s: V = (v >> @splat(3)) & @as(V, @splat(1));
     const e1 = (v >> @splat(2)) & @as(V, @splat(1));
     const e0 = (v >> @splat(1)) & @as(V, @splat(1));
     const m = v & @as(V, @splat(1));
     const t = ~e1 & (e0 | m) & @as(V, @splat(1));
-    var tt = t | (t << @as(V, @splat(1)));
+    var tt = t | (t << @splat(1));
     tt |= tt << @splat(2);
     tt |= tt << @splat(4);
     const exp = (e1 << @splat(7)) | (tt & @as(V, @splat(0b0111_1110))) | e0;
@@ -174,13 +179,83 @@ fn e2m1Range(
 
 test "e2m1" {
     const values: [8]u8 = .{ 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90 };
-    const split: [16]u4 = .{ 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0 };
-    const res = e2m1Range(1, &values);
+    var split: [16]u4 = undefined;
+    for (values, 0..) |v, i| {
+        const lo, const hi = unpack(v);
+        split[2 * i + 0] = lo;
+        split[2 * i + 1] = hi;
+    }
+
+    const res = e2m1Range(8, &values);
     const simd: [16]f32 = res;
     for (simd, split) |a, b| {
         const decode = decodeE2M1(b);
         try std.testing.expectEqual(a, decode);
     }
+}
+
+fn splat(comptime t: type, val: anytype) t {
+    return @as(t, @splat(val));
+}
+
+fn e4m3RangeImpl(
+    comptime n: comptime_int,
+    bytes: *const [n]u8,
+) @Vector(n, f32) {
+    const V = @Vector(n, u32);
+    const x: @Vector(n, u32) = bytes.*;
+    const sign: V = (x & splat(V, 0x80)) << @splat(24);
+    const e: V = (x >> @splat(3)) & splat(V, 0xF);
+    const m: V = x & splat(V, 0x7);
+    const normal: V = ((e + splat(V, 120)) << splat(@Vector(n, u5), 23)) |
+        (m << splat(@Vector(n, u5), 20));
+    const p: @Vector(n, u5) = @intCast(splat(V, 31) - @clz(m | splat(V, 1)));
+    const subnormal: V = ((splat(V, 118) + @as(V, p)) << splat(@Vector(n, u5), 23)) |
+        (((m << (splat(@Vector(n, u5), 3) - p)) & splat(V, 0x7)) << splat(@Vector(n, u5), 20));
+    const not_is_normal: V = @intFromBool(e == splat(V, 0));
+    const is_normal: V = @intFromBool(@as(@Vector(n, bool), e != splat(V, 0)));
+    const is_sub: V = @intFromBool((m != splat(V, 0))) & not_is_normal;
+    const magnitude: V = normal * is_normal + subnormal * is_sub;
+    const is_nan: V = @intFromBool((e == splat(V, 0xF)) & (m == splat(V, 0x7)));
+    const not_is_nan: V = @intFromBool(is_nan == splat(V, 0));
+    const or_mask = is_nan * splat(V, 0x7FC0_0000) + (not_is_nan) * magnitude;
+    const res: V = sign | or_mask;
+    return @bitCast(res);
+}
+
+test "decoding e4m3 works" {
+    for (0..256) |v| {
+        const val: u8 = @intCast(v);
+        const simd: [1]f32 = e4m3RangeImpl(1, &.{val});
+        const expected: u32 = @bitCast(decodeE4M3(val));
+
+        try std.testing.expectEqual(@as(u32, @bitCast(simd[0])), expected);
+    }
+}
+
+fn e4m3Range(
+    comptime n: comptime_int,
+    bytes: *const [n]u8,
+) @Vector(n * 16, f32) {
+    const res_v = e4m3RangeImpl(n, bytes);
+    return std.simd.interlace(.{
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+        res_v,
+    });
 }
 
 pub fn dequantRange(
@@ -190,11 +265,23 @@ pub fn dequantRange(
     out: []f32,
 ) error{InvalidDequantRanges}!void {
     try checkDequantRangeInput(packed_bytes, scales, out);
-    // Dumb way for the moment, using what we already have
-    for (scales, 0..) |scale, i| {
-        const bytes_slice = packed_bytes[i * 8 ..][0..8];
-        const out_slice = out[i * 16 ..][0..16];
-        dequantBlock(bytes_slice, scale, inv_global, out_slice);
+    var remaining_blocks: usize = scales.len;
+    const vec_lengths: [4]comptime_int = .{ 8, 4, 2, 1 };
+    inline for (vec_lengths) |C| {
+        const global: @Vector(C * 16, f32) = @splat(inv_global);
+        while (remaining_blocks >= C) {
+            const current_block = scales.len - remaining_blocks;
+            const byte_slice: *const [C * 8]u8 =
+                packed_bytes[current_block * 8 ..][0 .. C * 8];
+            const scale_slice: *const [C]u8 =
+                scales[current_block..][0..C];
+            const dequantized: @Vector(C * 16, f32) = e2m1Range(C * 8, byte_slice);
+            const scale_vector: @Vector(C * 16, f32) = e4m3Range(C, scale_slice);
+            const res = scale_vector * dequantized * global;
+            out[current_block * 16 ..][0 .. C * 16].* = res;
+            remaining_blocks -= C;
+        }
+        if (remaining_blocks == 0) return;
     }
 }
 
