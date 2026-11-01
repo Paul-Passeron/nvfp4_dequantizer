@@ -81,6 +81,112 @@ fn benchmark(
     };
 }
 
+const KernelInput = struct {
+    packed_bytes: []u8,
+    scales: []u8,
+    inv_global: f32,
+};
+
+fn loadTensorBytes(
+    a: std.mem.Allocator,
+    io: Io,
+    tensor: *const st.Tensor,
+) ![]u8 {
+    var file_buffer: [32 * 1024]u8 = undefined;
+    var reader: st.TensorReader = try .init(io, tensor, .{ .file = &file_buffer });
+    defer reader.deinit();
+
+    const bytes = try a.alloc(u8, @intCast(tensor.byte_len));
+    try reader.interface.readSliceAll(bytes);
+    return bytes;
+}
+
+fn loadKernelInputs(
+    a: std.mem.Allocator,
+    io: Io,
+    filename: []const u8,
+) ![]KernelInput {
+    var reg: st.Registry = try .fromPath(a, io, filename);
+    defer reg.deinit();
+
+    var inputs = std.ArrayList(KernelInput).empty;
+    var it = reg.iterator();
+    while (it.next()) |t| {
+        if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
+            const base = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
+            const val = try nvfp4.Tensor.fromRegistry(&reg, base) orelse
+                return error.MissingTensor;
+            try inputs.append(a, .{
+                .packed_bytes = try loadTensorBytes(a, io, val.weight_packed),
+                .scales = try loadTensorBytes(a, io, val.weight_scale),
+                .inv_global = 1.0 / try val.weight_global_scale.readScalar(io, f32),
+            });
+        }
+    }
+    return inputs.toOwnedSlice(a);
+}
+
+fn kernelBenchmark(
+    io: Io,
+    inputs: []const KernelInput,
+    algo: nvfp4.DequantAlgo,
+    out: []f32,
+) !BenchRes {
+    const chunk_blocks = out.len / 16;
+
+    const clock = Clock.awake;
+    const start = clock.now(io);
+
+    var bytes: usize = 0;
+
+    for (inputs) |input| {
+        var i: usize = 0;
+        while (i < input.scales.len) : (i += chunk_blocks) {
+            const k = @min(chunk_blocks, input.scales.len - i);
+            try nvfp4.dequantRange(
+                algo,
+                input.packed_bytes[i * 8 ..][0 .. k * 8],
+                input.scales[i..][0..k],
+                input.inv_global,
+                out[0 .. k * 16],
+            );
+            std.mem.doNotOptimizeAway(out.ptr);
+            bytes += k * 16 * @sizeOf(f32);
+        }
+    }
+
+    const end = clock.now(io);
+    return .{
+        .duration = start.durationTo(end),
+        .bytes_read = bytes,
+    };
+}
+
+fn runKernelBenchmarks(
+    a: std.mem.Allocator,
+    io: Io,
+    inputs: []const KernelInput,
+    name: []const u8,
+    out_size: usize,
+) !void {
+    const out = try a.alloc(f32, out_size / @sizeOf(f32));
+    defer a.free(out);
+
+    const warmer_count = 4;
+    var seq: BenchRes = undefined;
+    var simd: BenchRes = undefined;
+    for (0..warmer_count) |_| {
+        seq = try kernelBenchmark(io, inputs, .sequential, out);
+        simd = try kernelBenchmark(io, inputs, .simd, out);
+    }
+    print("Sequential kernel ({s} output): {f}\n", .{ name, seq });
+    print("SIMD kernel ({s} output): {f}\n", .{ name, simd });
+    print(
+        "SIMD kernel / Sequential kernel ({s} output): {d:.[2]}%\n",
+        .{ name, simd.ratio(seq), 2 },
+    );
+}
+
 pub fn main() !void {
     const a = std.heap.c_allocator;
     var threaded: Io.Threaded = .init(a, .{});
@@ -102,4 +208,13 @@ pub fn main() !void {
         "SIMD benchmark / Sequential benchmark: {d:.[1]}%\n",
         .{ simd.ratio(seq), 2 },
     );
+    print("\n", .{});
+
+    var arena: std.heap.ArenaAllocator = .init(a);
+    defer arena.deinit();
+    const inputs = try loadKernelInputs(arena.allocator(), io, filename);
+
+    try runKernelBenchmarks(a, io, inputs, "16KiB", 16 * 1024);
+    print("\n", .{});
+    try runKernelBenchmarks(a, io, inputs, "64MiB", 64 * 1024 * 1024);
 }
