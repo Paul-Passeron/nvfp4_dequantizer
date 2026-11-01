@@ -536,7 +536,7 @@ pub const TensorReader = struct {
     }
 };
 
-test "nvfp4 and f32 are the same" {
+test "nvfp4 and f32 are the same sequential" {
     const a = std.testing.allocator;
     const base = "model.layers.0.self_attn.q_proj";
     var threaded: std.Io.Threaded = .init(a, .{});
@@ -566,7 +566,7 @@ test "nvfp4 and f32 are the same" {
     var actual_reader = try t.reader(io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
-    });
+    }, .sequential);
     defer actual_reader.deinit();
 
     var expected_buffer: [4096]u8 = undefined;
@@ -598,7 +598,69 @@ test "nvfp4 and f32 are the same" {
     );
 }
 
-test "nvfp4 reader through a small interface buffer" {
+test "nvfp4 and f32 are the same simd" {
+    const a = std.testing.allocator;
+    const base = "model.layers.0.self_attn.q_proj";
+    var threaded: std.Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var nvfp4_reg: st.Registry = try .fromPath(a, io, "nvfp4/model.safetensors");
+    defer nvfp4_reg.deinit();
+    var f32_reg: st.Registry = try .fromPath(
+        a,
+        io,
+        "converted_f32/model-00001-of-00001.safetensors",
+    );
+    defer f32_reg.deinit();
+
+    const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
+        return error.MissingTensor;
+    const expected = f32_reg.get(base ++ ".weight") orelse
+        return error.MissingTensor;
+
+    try std.testing.expectEqual(st.DataType.F32, expected.dtype);
+    try std.testing.expectEqualSlices(u64, expected.shape, &t.shape());
+    try std.testing.expectEqual(expected.byte_len, t.dequantByteLen());
+
+    var packed_buffer: [4096]u8 = undefined;
+    var scales_buffer: [4096]u8 = undefined;
+    var actual_reader = try t.reader(io, .{
+        .packed_bytes = &packed_buffer,
+        .scales = &scales_buffer,
+    }, .simd);
+    defer actual_reader.deinit();
+
+    var expected_buffer: [4096]u8 = undefined;
+    var expected_reader: st.TensorReader = try .init(io, expected, .{
+        .file = &expected_buffer,
+    });
+    defer expected_reader.deinit();
+
+    var actual_chunk: [64 * 1024]u8 align(@alignOf(f32)) = undefined;
+    var expected_chunk: [64 * 1024]u8 align(@alignOf(f32)) = undefined;
+
+    var left = expected.byte_len;
+    while (left > 0) {
+        const n: usize = @intCast(@min(left, actual_chunk.len));
+        try actual_reader.interface.readSliceAll(actual_chunk[0..n]);
+        try expected_reader.interface.readSliceAll(expected_chunk[0..n]);
+
+        const actual_values: []f32 = std.mem.bytesAsSlice(f32, actual_chunk[0..n]);
+        const expected_values: []f32 = std.mem.bytesAsSlice(f32, expected_chunk[0..n]);
+        for (expected_values, actual_values) |e, v| {
+            try std.testing.expectApproxEqRel(e, v, 1e-3);
+        }
+        left -= n;
+    }
+
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try actual_reader.interface.discardRemaining(),
+    );
+}
+
+test "nvfp4 reader through a small interface buffer sequential" {
     const a = std.testing.allocator;
     const base = "model.layers.0.self_attn.q_proj";
     var threaded: std.Io.Threaded = .init(a, .{});
@@ -626,7 +688,65 @@ test "nvfp4 reader through a small interface buffer" {
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
         .interface = &interface_buffer,
+    }, .sequential);
+    defer actual_reader.deinit();
+
+    var expected_file_buffer: [4096]u8 = undefined;
+    var expected_interface_buffer: [4096]u8 = undefined;
+    var expected_reader: st.TensorReader = try .init(io, expected, .{
+        .file = &expected_file_buffer,
+        .interface = &expected_interface_buffer,
     });
+    defer expected_reader.deinit();
+
+    const value_count = 1000;
+    for (0..value_count) |_| {
+        const e: f32 = @bitCast(try expected_reader.interface.takeInt(u32, .little));
+        const v: f32 = @bitCast(try actual_reader.interface.takeInt(u32, .little));
+        try std.testing.expectApproxEqRel(e, v, 1e-3);
+    }
+
+    var actual_chunk: [4096]u8 align(@alignOf(f32)) = undefined;
+    var expected_chunk: [4096]u8 align(@alignOf(f32)) = undefined;
+    try actual_reader.interface.readSliceAll(&actual_chunk);
+    try expected_reader.interface.readSliceAll(&expected_chunk);
+
+    const actual_values: []f32 = std.mem.bytesAsSlice(f32, &actual_chunk);
+    const expected_values: []f32 = std.mem.bytesAsSlice(f32, &expected_chunk);
+    for (expected_values, actual_values) |e, v| {
+        try std.testing.expectApproxEqRel(e, v, 1e-3);
+    }
+}
+
+test "nvfp4 reader through a small interface buffer simd" {
+    const a = std.testing.allocator;
+    const base = "model.layers.0.self_attn.q_proj";
+    var threaded: std.Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var nvfp4_reg: st.Registry = try .fromPath(a, io, "nvfp4/model.safetensors");
+    defer nvfp4_reg.deinit();
+    var f32_reg: st.Registry = try .fromPath(
+        a,
+        io,
+        "converted_f32/model-00001-of-00001.safetensors",
+    );
+    defer f32_reg.deinit();
+
+    const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
+        return error.MissingTensor;
+    const expected = f32_reg.get(base ++ ".weight") orelse
+        return error.MissingTensor;
+
+    var packed_buffer: [4096]u8 = undefined;
+    var scales_buffer: [4096]u8 = undefined;
+    var interface_buffer: [8]u8 = undefined;
+    var actual_reader = try t.reader(io, .{
+        .packed_bytes = &packed_buffer,
+        .scales = &scales_buffer,
+        .interface = &interface_buffer,
+    }, .sequential);
     defer actual_reader.deinit();
 
     var expected_file_buffer: [4096]u8 = undefined;
