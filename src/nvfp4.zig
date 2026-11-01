@@ -346,7 +346,7 @@ fn compute_vec_lengths() [lengths_size]u32 {
 
 const vec_lengths: [lengths_size]u32 = compute_vec_lengths();
 
-pub fn dequantRangeSimd(
+pub noinline fn dequantRangeSimd(
     packed_bytes: []const u8,
     scales: []const u8,
     inv_global: f32,
