@@ -5,46 +5,80 @@ const Io = std.Io;
 const Clock = Io.Clock;
 const print = std.debug.print;
 
+const BenchRes = struct {
+    duration: Io.Duration,
+    bytes_read: usize,
+
+    fn bytes_per_ns(self: BenchRes) f32 {
+        const bytes: f32 = @floatFromInt(self.bytes_read);
+        const ns: f32 = @floatFromInt(self.duration.toNanoseconds());
+        return bytes / ns;
+    }
+
+    pub fn format(
+        self: BenchRes,
+        writer: *Io.Writer,
+    ) !void {
+        try writer.print("Read {} bytes in {f}. ({} bytes/ns)", .{
+            self.bytes_read,
+            self.duration,
+            self.bytes_per_ns(),
+        });
+    }
+
+    pub fn ratio(self: BenchRes, other: BenchRes) f32 {
+        const self_ns: f32 = @floatFromInt(self.duration.toNanoseconds());
+        const other_ns: f32 = @floatFromInt(other.duration.toNanoseconds());
+        return 100.0 * (self_ns / other_ns - 1);
+    }
+};
+
 fn benchmark(
     a: std.mem.Allocator,
-    io: std.Io,
+    io: Io,
     filename: []const u8,
     algo: nvfp4.DequantAlgo,
-) !std.Io.Duration {
-    var buffer: [4096]u8 = undefined;
+) !BenchRes {
+    const buff_size = 32 * 1024;
+    var buffer: [buff_size]u8 = undefined;
     var aw: Io.Writer.Discarding = .init(&buffer);
-    // defer aw.deinit();
 
     var reg: st.Registry = try .fromPath(a, io, filename);
     defer reg.deinit();
 
-    var tensors = std.ArrayList([]const u8).empty;
+    var tensors = std.ArrayList(nvfp4.Tensor).empty;
     var it = reg.iterator();
     while (it.next()) |t| {
         if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
-            const val = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
+            const base = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
+            const val = try nvfp4.Tensor.fromRegistry(&reg, base) orelse
+                return error.MissingTensor;
             try tensors.append(a, val);
         }
     }
-    const start = Clock.real.now(io);
+    const clock = Clock.awake;
+    const start = clock.now(io);
 
-    for (tensors.items) |base| {
-        const t = try nvfp4.Tensor.fromRegistry(&reg, base) orelse
-            return error.MissingTensor;
+    var packed_buffer: [buff_size]u8 = undefined;
+    var scales_buffer: [buff_size]u8 = undefined;
 
-        var packed_buffer: [4096]u8 = undefined;
-        var scales_buffer: [4096]u8 = undefined;
+    var bytes: usize = 0;
+
+    for (tensors.items) |t| {
         var reader = try t.reader(io, .{
             .packed_bytes = &packed_buffer,
             .scales = &scales_buffer,
         }, algo);
         defer reader.deinit();
 
-        _ = try reader.interface.streamRemaining(&aw.writer);
+        bytes += try reader.interface.streamRemaining(&aw.writer);
     }
 
-    const end = Clock.real.now(io);
-    return start.durationTo(end);
+    const end = clock.now(io);
+    return .{
+        .duration = start.durationTo(end),
+        .bytes_read = bytes,
+    };
 }
 
 pub fn main() !void {
@@ -53,19 +87,19 @@ pub fn main() !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    print("Sequential benchmark took {f}\n", .{try benchmark(
-        a,
-        io,
-        "nvfp4/model.safetensors",
-        // "model.layers.0.self_attn.q_proj",
-        .sequential,
-    )});
+    const filename = "nvfp4/model.safetensors";
 
-    print("SIMD benchmark took {f}\n", .{try benchmark(
-        a,
-        io,
-        "nvfp4/model.safetensors",
-        // "model.layers.0.self_attn.q_proj",
-        .simd,
-    )});
+    const warmer_count = 4;
+    var seq: BenchRes = undefined;
+    var simd: BenchRes = undefined;
+    for (0..warmer_count) |_| {
+        seq = try benchmark(a, io, filename, .sequential);
+        simd = try benchmark(a, io, filename, .simd);
+    }
+    print("Sequential benchmark: {f}\n", .{seq});
+    print("SIMD benchmark: {f}\n", .{simd});
+    print(
+        "SIMD benchmark / Sequential benchmark: {d:.[1]}%\n",
+        .{ simd.ratio(seq), 2 },
+    );
 }
