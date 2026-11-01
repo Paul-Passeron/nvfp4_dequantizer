@@ -746,7 +746,7 @@ test "nvfp4 reader through a small interface buffer simd" {
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
         .interface = &interface_buffer,
-    }, .sequential);
+    }, .simd);
     defer actual_reader.deinit();
 
     var expected_file_buffer: [4096]u8 = undefined;
