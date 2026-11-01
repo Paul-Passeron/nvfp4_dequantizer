@@ -71,7 +71,7 @@ fn create_decodeE2M1_table() [16]f32 {
 
 const decodeE2M1_table: [16]f32 = create_decodeE2M1_table();
 
-pub fn decodeE2M1(nibble: u4) f32 {
+pub inline fn decodeE2M1(nibble: u4) f32 {
     return decodeE2M1_table[nibble];
 }
 
@@ -164,7 +164,7 @@ fn split_bytes_into_nibbles(
 const e2m1Alg = enum { look_up_table, bits };
 const e2m1_alg: e2m1Alg = .look_up_table;
 
-fn e2m1Range(
+inline fn e2m1Range(
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
 ) @Vector(n * 2, f32) {
