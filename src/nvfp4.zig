@@ -252,16 +252,16 @@ fn e4m3Range(
 pub const DequantAlgo = enum { sequential, simd };
 
 inline fn dequantBlocks(
-    comptime C: comptime_int,
-    packed_bytes: *const [C * 8]u8,
-    scales: *const [C]u8,
+    comptime B: comptime_int,
+    packed_bytes: *const [B * 8]u8,
+    scales: *const [B]u8,
     inv_global: f32,
-    out: *[C * 16]f32,
+    out: *[B * 16]f32,
 ) void {
-    const V = @Vector(C * 16, f32);
+    const V = @Vector(B * 16, f32);
     const global = splat(V, inv_global);
-    const dequantized: V = e2m1Range(C * 8, packed_bytes);
-    const scale_vector: V = e4m3Range(C, scales);
+    const dequantized: V = e2m1Range(B * 8, packed_bytes);
+    const scale_vector: V = e4m3Range(B, scales);
     const res = scale_vector * dequantized * global;
     out.* = res;
 }
