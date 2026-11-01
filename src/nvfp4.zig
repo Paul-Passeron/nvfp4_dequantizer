@@ -239,9 +239,9 @@ test "decoding e4m3 works" {
     }
 }
 
-fn shuffleMask(comptime n: comptime_int) [n * 16]i32 {
-    var indices: [n * 16]i32 = undefined;
-    for (&indices, 0..) |*index, i| index.* = @intCast(i / 16);
+fn shuffleMask(comptime n: comptime_int, comptime m: comptime_int) [n * m]i32 {
+    var indices: [n * m]i32 = undefined;
+    for (&indices, 0..) |*index, i| index.* = @intCast(i / m);
     return indices;
 }
 
@@ -252,7 +252,16 @@ fn e4m3Range(
 ) @Vector(n * 16, f32) {
     const sg = e4m3RangeImpl(n, bytes);
     const scales = sg * splat(@TypeOf(sg), scale);
-    return @shuffle(f32, scales, undefined, shuffleMask(n));
+    return broadcast(n, 16, f32, scales);
+}
+
+fn broadcast(
+    comptime n: comptime_int,
+    comptime m: comptime_int,
+    comptime t: type,
+    v: @Vector(n, t),
+) @Vector(n * m, t) {
+    return @shuffle(t, v, undefined, shuffleMask(n, m));
 }
 
 pub const DequantAlgo = enum { sequential, simd };
