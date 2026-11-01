@@ -660,6 +660,62 @@ test "nvfp4 and f32 are the same simd" {
     );
 }
 
+test "nvfp4 is the same for sequential and simd" {
+    const a = std.testing.allocator;
+    const base = "model.layers.0.self_attn.q_proj";
+    var threaded: std.Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var nvfp4_reg: st.Registry = try .fromPath(a, io, "nvfp4/model.safetensors");
+    defer nvfp4_reg.deinit();
+
+    const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
+        return error.MissingTensor;
+
+    var packed_buffer: [4096]u8 = undefined;
+    var scales_buffer: [4096]u8 = undefined;
+    var actual_reader = try t.reader(io, .{
+        .packed_bytes = &packed_buffer,
+        .scales = &scales_buffer,
+    }, .simd);
+    defer actual_reader.deinit();
+
+    var expected_packed_buffer: [4096]u8 = undefined;
+    var expected_scales_buffer: [4096]u8 = undefined;
+    var expected_reader = try t.reader(io, .{
+        .packed_bytes = &expected_packed_buffer,
+        .scales = &expected_scales_buffer,
+    }, .sequential);
+    defer expected_reader.deinit();
+
+    var actual_chunk: [64 * 1024]u8 align(@alignOf(f32)) = undefined;
+    var expected_chunk: [64 * 1024]u8 align(@alignOf(f32)) = undefined;
+
+    var left = t.dequantByteLen();
+    while (left > 0) {
+        const n: usize = @intCast(@min(left, actual_chunk.len));
+        try actual_reader.interface.readSliceAll(actual_chunk[0..n]);
+        try expected_reader.interface.readSliceAll(expected_chunk[0..n]);
+
+        const actual_values: []f32 = std.mem.bytesAsSlice(f32, actual_chunk[0..n]);
+        const expected_values: []f32 = std.mem.bytesAsSlice(f32, expected_chunk[0..n]);
+        for (expected_values, actual_values) |e, v| {
+            try std.testing.expectApproxEqRel(e, v, 1e-6);
+        }
+        left -= n;
+    }
+
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try actual_reader.interface.discardRemaining(),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try expected_reader.interface.discardRemaining(),
+    );
+}
+
 test "nvfp4 reader through a small interface buffer sequential" {
     const a = std.testing.allocator;
     const base = "model.layers.0.self_attn.q_proj";
