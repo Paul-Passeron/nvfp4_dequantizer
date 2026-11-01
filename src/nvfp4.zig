@@ -161,30 +161,53 @@ fn split_bytes_into_nibbles(
     return interleaved;
 }
 
+const e2m1Alg = enum { look_up_table, bits };
+const e2m1_alg: e2m1Alg = .look_up_table;
+
 fn e2m1Range(
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
 ) @Vector(n * 2, f32) {
-    const V = @Vector(n * 2, u8);
-    const W = @Vector(n * 2, u32);
-    const bytes: @Vector(n, u8) = packed_bytes.*;
-    const v: V = split_bytes_into_nibbles(n, u8, bytes);
-    const s: V = (v >> @splat(3)) & @as(V, @splat(1));
-    const e1 = (v >> @splat(2)) & @as(V, @splat(1));
-    const e0 = (v >> @splat(1)) & @as(V, @splat(1));
-    const m = v & @as(V, @splat(1));
-    const t = ~e1 & (e0 | m) & @as(V, @splat(1));
-    var tt = t | (t << @splat(1));
-    tt |= tt << @splat(2);
-    tt |= tt << @splat(4);
-    const exp = (e1 << @splat(7)) | (tt & @as(V, @splat(0b0111_1110))) | e0;
-    const byte3 = (s << @splat(7)) | (exp >> @splat(1));
-    const byte2 = ((exp & @as(V, @splat(1))) << @splat(7)) | ((m & (e0 | e1)) << @splat(6));
-    const bits = (@as(W, byte3) << @splat(24)) | (@as(W, byte2) << @splat(16));
-    return @bitCast(bits);
+    return e2m1RangeImpl(n, e2m1_alg, packed_bytes);
 }
 
-test "e2m1" {
+fn e2m1RangeImpl(
+    comptime n: comptime_int,
+    algo: e2m1Alg,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, f32) {
+    switch (algo) {
+        .bits => {
+            const V = @Vector(n * 2, u8);
+            const W = @Vector(n * 2, u32);
+            const bytes: @Vector(n, u8) = packed_bytes.*;
+            const v: V = split_bytes_into_nibbles(n, u8, bytes);
+            const s: V = (v >> @splat(3)) & @as(V, @splat(1));
+            const e = (v >> @splat(1)) & @as(V, @splat(3));
+            const m = v & @as(V, @splat(1));
+            const zero: V = @splat(0);
+            const is_sub = e == zero;
+            const exp = @select(u8, is_sub, m * @as(V, @splat(126)), e + @as(V, @splat(126)));
+            const mant = @select(u8, is_sub, zero, m);
+            const byte3 = (s << @splat(7)) | (exp >> @splat(1));
+            const byte2 = ((exp & @as(V, @splat(1))) << @splat(7)) | (mant << @splat(6));
+            const bits = (@as(W, byte3) << @splat(24)) | (@as(W, byte2) << @splat(16));
+            return @bitCast(bits);
+        },
+        .look_up_table => {
+            var res: [n * 2]f32 = undefined;
+            inline for (packed_bytes, 0..) |b, i| {
+                const lo: u4 = @intCast(b & 0b1111);
+                const hi: u4 = @intCast(b >> 4);
+                res[2 * i + 0] = decodeE2M1_table[lo];
+                res[2 * i + 1] = decodeE2M1_table[hi];
+            }
+            return res;
+        },
+    }
+}
+
+test "e2m1 lut" {
     const values: [8]u8 = .{ 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90 };
     var split: [16]u4 = undefined;
     for (values, 0..) |v, i| {
@@ -193,7 +216,24 @@ test "e2m1" {
         split[2 * i + 1] = hi;
     }
 
-    const res = e2m1Range(8, &values);
+    const res = e2m1RangeImpl(8, .look_up_table, &values);
+    const simd: [16]f32 = res;
+    for (simd, split) |a, b| {
+        const decode = decodeE2M1(b);
+        try std.testing.expectEqual(a, decode);
+    }
+}
+
+test "e2m1 bits" {
+    const values: [8]u8 = .{ 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90 };
+    var split: [16]u4 = undefined;
+    for (values, 0..) |v, i| {
+        const lo, const hi = unpack(v);
+        split[2 * i + 0] = lo;
+        split[2 * i + 1] = hi;
+    }
+
+    const res = e2m1RangeImpl(8, .bits, &values);
     const simd: [16]f32 = res;
     for (simd, split) |a, b| {
         const decode = decodeE2M1(b);
