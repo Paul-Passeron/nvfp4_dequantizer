@@ -249,10 +249,9 @@ fn e4m3Range(
     comptime n: comptime_int,
     bytes: *const [n]u8,
     scale: f32,
-) @Vector(n * 16, f32) {
+) @Vector(n, f32) {
     const sg = e4m3RangeImpl(n, bytes);
-    const scales = sg * splat(@TypeOf(sg), scale);
-    return broadcast(n, 16, f32, scales);
+    return sg * splat(@TypeOf(sg), scale);
 }
 
 fn broadcast(
@@ -280,10 +279,10 @@ inline fn dequantBlocks(
     inv_global: f32,
     out: *[B * 16]f32,
 ) void {
-    const V = @Vector(B * 16, f32);
-    const dequantized: V = e2m1Range(B * 8, packed_bytes);
-    const scale_vector: V = e4m3Range(B, scales, inv_global);
-    const res = dequantized * scale_vector;
+    const dequantized = e2m1Range(B * 8, packed_bytes);
+    const scale_vector = e4m3Range(B, scales, inv_global);
+    const broadcasted = broadcast(B, 16, f32, scale_vector);
+    const res = dequantized * broadcasted;
     out.* = res;
 }
 
