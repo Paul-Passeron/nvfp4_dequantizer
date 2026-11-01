@@ -250,7 +250,10 @@ fn e4m3Range(
     bytes: *const [n]u8,
     scale: f32,
 ) @Vector(n, f32) {
-    const sg = e4m3RangeImpl(n, bytes);
+    var sg: @Vector(n, f32) = undefined;
+    inline for (0..n) |k| {
+        sg[k] = e4m3_table[bytes[k]];
+    }
     return sg * splat(@TypeOf(sg), scale);
 }
 
