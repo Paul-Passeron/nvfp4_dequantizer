@@ -165,9 +165,10 @@ fn e2m1Range(
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
 ) @Vector(n * 2, f32) {
-    const V = @Vector(n * 2, u32);
+    const V = @Vector(n * 2, u8);
+    const W = @Vector(n * 2, u32);
     const bytes: @Vector(n, u8) = packed_bytes.*;
-    const v: V = split_bytes_into_nibbles(n, u32, bytes);
+    const v: V = split_bytes_into_nibbles(n, u8, bytes);
     const s: V = (v >> @splat(3)) & @as(V, @splat(1));
     const e1 = (v >> @splat(2)) & @as(V, @splat(1));
     const e0 = (v >> @splat(1)) & @as(V, @splat(1));
@@ -177,7 +178,9 @@ fn e2m1Range(
     tt |= tt << @splat(2);
     tt |= tt << @splat(4);
     const exp = (e1 << @splat(7)) | (tt & @as(V, @splat(0b0111_1110))) | e0;
-    const bits = (s << @splat(31)) | (exp << @splat(23)) | ((m & (e0 | e1)) << @splat(22));
+    const byte3 = (s << @splat(7)) | (exp >> @splat(1));
+    const byte2 = ((exp & @as(V, @splat(1))) << @splat(7)) | ((m & (e0 | e1)) << @splat(6));
+    const bits = (@as(W, byte3) << @splat(24)) | (@as(W, byte2) << @splat(16));
     return @bitCast(bits);
 }
 
