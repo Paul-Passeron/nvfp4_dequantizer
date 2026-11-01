@@ -254,6 +254,13 @@ fn e4m3Range(
 
 pub const DequantAlgo = enum { sequential, simd };
 
+const e4m3_table: [256]f32 = blk: {
+    @setEvalBranchQuota(20_000);
+    var t: [256]f32 = undefined;
+    for (&t, 0..) |*x, i| x.* = decodeE4M3(@intCast(i));
+    break :blk t;
+};
+
 inline fn dequantBlocks(
     comptime B: comptime_int,
     packed_bytes: *const [B * 8]u8,
