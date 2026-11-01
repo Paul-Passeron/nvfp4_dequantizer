@@ -251,6 +251,38 @@ fn e4m3Range(
 
 pub const DequantAlgo = enum { sequential, simd };
 
+inline fn dequantBlocks(
+    comptime C: comptime_int,
+    packed_bytes: *const [C * 8]u8,
+    scales: *const [C]u8,
+    inv_global: f32,
+    out: *[C * 16]f32,
+) void {
+    const V = @Vector(C * 16, f32);
+    const global = splat(V, inv_global);
+    const dequantized: V = e2m1Range(C * 8, packed_bytes);
+    const scale_vector: V = e4m3Range(C, scales);
+    const res = scale_vector * dequantized * global;
+    out.* = res;
+}
+
+const lengths_size: comptime_int = blk: {
+    const n = std.simd.suggestVectorLength(f32) orelse 16;
+    const pot = std.math.ceilPowerOfTwo(u32, n) catch unreachable;
+    break :blk @intCast(pot);
+};
+
+fn compute_vec_lengths() [lengths_size]u32 {
+    var res: [lengths_size]u32 = undefined;
+    for (0..lengths_size) |i| {
+        const p: i32 = lengths_size - i - 1;
+        res[i] = @intCast(std.math.powi(i32, 2, p) catch unreachable);
+    }
+    return res;
+}
+
+const vec_lengths: [lengths_size]u32 = compute_vec_lengths();
+
 pub fn dequantRangeSimd(
     packed_bytes: []const u8,
     scales: []const u8,
@@ -258,19 +290,16 @@ pub fn dequantRangeSimd(
     out: []f32,
 ) void {
     var remaining_blocks: usize = scales.len;
-    const vec_lengths = [_]comptime_int{ 16, 8, 4, 2, 1 };
     inline for (vec_lengths) |C| {
-        const global: @Vector(C * 16, f32) = @splat(inv_global);
         while (remaining_blocks >= C) {
             const current_block = scales.len - remaining_blocks;
-            const byte_slice: *const [C * 8]u8 =
-                packed_bytes[current_block * 8 ..][0 .. C * 8];
-            const scale_slice: *const [C]u8 =
-                scales[current_block..][0..C];
-            const dequantized: @Vector(C * 16, f32) = e2m1Range(C * 8, byte_slice);
-            const scale_vector: @Vector(C * 16, f32) = e4m3Range(C, scale_slice);
-            const res = scale_vector * dequantized * global;
-            out[current_block * 16 ..][0 .. C * 16].* = res;
+            dequantBlocks(
+                C,
+                packed_bytes[current_block * 8 ..][0 .. C * 8],
+                scales[current_block..][0..C],
+                inv_global,
+                out[current_block * 16 ..][0 .. C * 16],
+            );
             remaining_blocks -= C;
         }
         if (remaining_blocks == 0) return;
