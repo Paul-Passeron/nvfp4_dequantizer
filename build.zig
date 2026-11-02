@@ -102,4 +102,12 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_st_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
     test_step.dependOn(&run_bench_unit_tests.step);
+
+    const all_bench_cmd = b.addRunArtifact(bench);
+    all_bench_cmd.step.dependOn(&bench_artifact.step);
+    all_bench_cmd.step.dependOn(&run_cmd.step);
+    all_bench_cmd.step.dependOn(test_step);
+
+    const all_step = b.step("all", "Run main, the tests and the benchmark");
+    all_step.dependOn(&all_bench_cmd.step);
 }
