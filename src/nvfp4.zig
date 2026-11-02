@@ -161,7 +161,7 @@ fn split_bytes_into_nibbles(
     return interleaved;
 }
 
-const e2m1Alg = enum { look_up_table, bits, tbl };
+pub const e2m1Alg = enum { look_up_table, bits, tbl };
 
 fn e2m1ByteTable(comptime shift: u5) @Vector(16, u8) {
     var t: [16]u8 = undefined;
