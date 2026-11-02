@@ -38,6 +38,8 @@ fn getAllNVFP4Tensors(
     r: *const st.Registry,
 ) ![]nvfp4.Tensor {
     var tensors = std.ArrayList(nvfp4.Tensor).empty;
+    errdefer tensors.deinit(a);
+
     var it = r.iterator();
     while (it.next()) |t| {
         if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
@@ -64,6 +66,8 @@ fn benchmark(
     defer reg.deinit();
 
     const tensors = try getAllNVFP4Tensors(a, &reg);
+    defer a.free(tensors);
+
     const clock = Clock.awake;
     const start = clock.now(io);
 
