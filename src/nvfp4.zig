@@ -113,7 +113,7 @@ pub fn dequantBlock(
     packed_bytes: *const [8]u8,
     scale: u8,
     inv_global: f32,
-    out: *[16]f32,
+    out: *align(1) [16]f32,
 ) void {
     const scale_f = decodeE4M3(scale) * inv_global;
     const V = @Vector(16, f32);
@@ -132,7 +132,7 @@ pub fn dequantBlock(
 fn checkDequantRangeInput(
     packed_bytes: []const u8,
     scales: []const u8,
-    out: []f32,
+    out: []align(1) f32,
 ) error{InvalidDequantRanges}!void {
     const err = error.InvalidDequantRanges;
     if (packed_bytes.len % 8 != 0) return err;
@@ -402,7 +402,7 @@ inline fn dequantBlocks(
     packed_bytes: *const [B * 8]u8,
     scales: *const [B]u8,
     inv_global: f32,
-    out: *[B * 16]f32,
+    out: *align(1) [B * 16]f32,
 ) void {
     const dequantized = e2m1Range(B * 8, packed_bytes);
     const scale_vector = e4m3Range(B, scales, inv_global);
@@ -432,7 +432,7 @@ pub noinline fn dequantRangeSimd(
     packed_bytes: []const u8,
     scales: []const u8,
     inv_global: f32,
-    out: []f32,
+    out: []align(1) f32,
 ) void {
     var remaining_blocks: usize = scales.len;
     inline for (vec_lengths) |C| {
@@ -456,7 +456,7 @@ pub fn dequantRange(
     packed_bytes: []const u8,
     scales: []const u8,
     inv_global: f32,
-    out: []f32,
+    out: []align(1) f32,
 ) error{InvalidDequantRanges}!void {
     try checkDequantRangeInput(packed_bytes, scales, out);
     switch (algo) {
@@ -629,24 +629,24 @@ pub const TensorReader = struct {
             self.remaining_blocks,
         ));
 
-        var packed_bytes: [CHUNK_BLOCKS * PACKED_PER_BLOCK]u8 = undefined;
-        var scales: [CHUNK_BLOCKS]u8 = undefined;
-        var out: [CHUNK_BLOCKS * BLOCK_COUNT]f32 = undefined;
-        try self.readInputs(packed_bytes[0 .. k * PACKED_PER_BLOCK], scales[0..k]);
-        dequantRange(
-            self.algo,
-            packed_bytes[0 .. k * PACKED_PER_BLOCK],
-            scales[0..k],
-            self.inv_global,
-            out[0 .. k * BLOCK_COUNT],
-        ) catch unreachable;
-
         const n = k * DEQUANT_BLOCK_BYTE_LEN;
         // we know that n fits because
         // n = k * DEQUANT_BLOCK_BYTE_LEN and k <= blocks_to_write
         // and blocks_to_write = dest.len / DEQUANT_BLOCK_BYTE_LEN
         // so n <= dest.len
-        @memcpy(dest[0..n], std.mem.sliceAsBytes(out[0 .. k * BLOCK_COUNT]));
+
+        var packed_bytes: [CHUNK_BLOCKS * PACKED_PER_BLOCK]u8 = undefined;
+        var scales: [CHUNK_BLOCKS]u8 = undefined;
+        try self.readInputs(packed_bytes[0 .. k * PACKED_PER_BLOCK], scales[0..k]);
+        const dest_f32: []align(1) f32 = std.mem.bytesAsSlice(f32, dest[0..n]);
+        dequantRange(
+            self.algo,
+            packed_bytes[0 .. k * PACKED_PER_BLOCK],
+            scales[0..k],
+            self.inv_global,
+            dest_f32,
+        ) catch unreachable;
+
         io_writer.advance(n);
         self.remaining_blocks -= k;
         return n;
