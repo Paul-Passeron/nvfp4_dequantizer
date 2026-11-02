@@ -161,8 +161,23 @@ fn split_bytes_into_nibbles(
     return interleaved;
 }
 
-const e2m1Alg = enum { look_up_table, bits };
-const e2m1_alg: e2m1Alg = .look_up_table;
+const e2m1Alg = enum { look_up_table, bits, tbl };
+const e2m1_alg: e2m1Alg = .tbl;
+
+fn e2m1ByteTable(comptime shift: u5) @Vector(16, u8) {
+    var t: [16]u8 = undefined;
+    for (&t, decodeE2M1_table) |*x, f| {
+        const bits: u32 = @bitCast(f);
+        std.debug.assert(bits & 0xFFFF == 0);
+        x.* = @truncate(bits >> shift);
+    }
+    return t;
+}
+
+const e2m1_byte3_table = e2m1ByteTable(24);
+const e2m1_byte2_table = e2m1ByteTable(16);
+const e2m1_byte1_table = e2m1ByteTable(8);
+const e2m1_byte0_table = e2m1ByteTable(0);
 
 inline fn tblAsmImpl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
     return asm ("tbl %[out].16b, {%[t].16b}, %[i].16b"
@@ -191,6 +206,15 @@ inline fn e2m1Range(
     packed_bytes: *const [n]u8,
 ) @Vector(n * 2, f32) {
     return e2m1RangeImpl(n, e2m1_alg, packed_bytes);
+}
+
+fn interleaveMask(comptime n: comptime_int) [n * 2]i32 {
+    var idx: [n * 2]i32 = undefined;
+    for (0..n) |i| {
+        idx[2 * i + 0] = @intCast(i);
+        idx[2 * i + 1] = ~@as(i32, @intCast(i));
+    }
+    return idx;
 }
 
 fn e2m1RangeImpl(
@@ -226,6 +250,37 @@ fn e2m1RangeImpl(
             }
             return res;
         },
+        .tbl => {
+            comptime std.debug.assert(n * 2 % 16 == 0);
+            const bytes: @Vector(n, u8) = packed_bytes.*;
+            const nibbles: [n * 2]u8 = split_bytes_into_nibbles(n, u8, bytes);
+            const interleave = comptime interleaveMask(16);
+            var res: [n * 2]u32 = undefined;
+            inline for (0..n * 2 / 16) |k| {
+                const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
+                const b3 = tbl(e2m1_byte3_table, idx);
+                const b2 = tbl(e2m1_byte2_table, idx);
+                const b1 = tbl(e2m1_byte1_table, idx);
+                const b0 = tbl(e2m1_byte0_table, idx);
+                const hi16: @Vector(16, u16) = @bitCast(@shuffle(u8, b2, b3, interleave));
+                const lo16: @Vector(16, u16) = @bitCast(@shuffle(u8, b0, b1, interleave));
+                const full = (@as(@Vector(16, u32), hi16) << @splat(16)) + lo16;
+                res[k * 16 ..][0..16].* = full;
+            }
+            const bits: @Vector(n * 2, u32) = res;
+            return @bitCast(bits);
+        },
+    }
+}
+
+test "e2m1 tbl" {
+    var values: [128]u8 = undefined;
+    // even bytes then odd bytes: covers every lo and hi nibble
+    for (&values, 0..) |*v, i| v.* = @intCast(i * 2 + (i >> 6));
+    const res: [256]f32 = e2m1RangeImpl(128, .tbl, &values);
+    const expected: [256]f32 = e2m1RangeImpl(128, .look_up_table, &values);
+    for (res, expected) |a, b| {
+        try std.testing.expectEqual(@as(u32, @bitCast(b)), @as(u32, @bitCast(a)));
     }
 }
 
