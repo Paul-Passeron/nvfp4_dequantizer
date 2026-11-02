@@ -57,17 +57,36 @@ fn getAllNVFP4Jobs(
     r: *const st.Registry,
 ) ![]Job {
     var jobs = std.ArrayList(Job).empty;
-    errdefer jobs.deinit(a);
+    errdefer {
+        for (jobs.items) |j| {
+            switch (j.dest) {
+                .mem => |buffer| a.free(buffer),
+                else => {},
+            }
+        }
+        jobs.deinit(a);
+    }
 
     const tensors = try getAllNVFP4Tensors(a, r);
     defer a.free(tensors);
 
     for (tensors) |t| {
-        const buffer = try a.alloc(u8, t.dequantByteLen());
-        try jobs.append(a, .{ .dest = buffer, .tensor = t });
+        try jobs.append(a, .{ .dest = .discard, .tensor = t });
     }
 
     return try jobs.toOwnedSlice(a);
+}
+
+fn freeJobs(a: std.mem.Allocator, jobs: []Job) void {
+    for (jobs) |j| {
+        switch (j.dest) {
+            .mem => |buffer| {
+                a.free(buffer);
+            },
+            else => {},
+        }
+    }
+    a.free(jobs);
 }
 
 fn benchmark(
@@ -112,22 +131,13 @@ fn benchmark(
 }
 
 fn benchmarkJobs(
-    a: std.mem.Allocator,
     io: Io,
-    filename: []const u8,
+    jobs: []Job,
     algo: nvfp4.DequantAlgo,
 ) !BenchRes {
-    var reg: st.Registry = try .fromPath(a, io, filename);
-    defer reg.deinit();
-
-    const jobs = try getAllNVFP4Jobs(a, &reg);
-    defer a.free(jobs);
-    defer for (jobs) |j| {
-        a.free(j.dest);
-    };
-
     var bytes: usize = 0;
-    for (jobs) |j| {
+    for (jobs) |*j| {
+        j.err = null;
         bytes += j.tensor.dequantByteLen();
     }
 
@@ -139,6 +149,31 @@ fn benchmarkJobs(
     for (jobs) |j| {
         if (j.err) |err| return err;
     }
+
+    return .{
+        .duration = start.durationTo(end),
+        .bytes_read = bytes,
+    };
+}
+
+fn benchmarkJobsSequentially(
+    io: Io,
+    jobs: []Job,
+    algo: nvfp4.DequantAlgo,
+) !BenchRes {
+    var bytes: usize = 0;
+    for (jobs) |*j| {
+        j.err = null;
+        bytes += j.tensor.dequantByteLen();
+    }
+
+    const clock = Clock.awake;
+    const start = clock.now(io);
+    for (jobs) |*j| {
+        // Doesn't set err
+        try j.runImpl(io, algo);
+    }
+    const end = clock.now(io);
 
     return .{
         .duration = start.durationTo(end),
@@ -254,11 +289,16 @@ fn runKernelBenchmarks(
 
 // TODO: Look into how the ZML framework actually does multicore io
 
+pub const Destination = union(enum) {
+    /// length must be `tensor.dequantByteLen()`
+    mem: []u8,
+    discard,
+};
+
 pub const Job = struct {
     tensor: nvfp4.Tensor,
 
-    /// length must be `tensor.dequantByteLen()`
-    dest: []u8,
+    dest: Destination,
 
     err: ?anyerror = null,
 
@@ -277,8 +317,17 @@ pub const Job = struct {
             .scales = &scale_buffer,
         }, algo);
         defer reader.deinit();
-        var w = Io.Writer.fixed(self.dest);
-        _ = try reader.interface.streamRemaining(&w);
+        switch (self.dest) {
+            .mem => |buffer| {
+                var w = Io.Writer.fixed(buffer);
+                _ = try reader.interface.streamRemaining(&w);
+            },
+            .discard => {
+                var buffer: [32 * 1024]u8 = undefined;
+                var w = Io.Writer.Discarding.init(&buffer);
+                _ = try reader.interface.streamRemaining(&w.writer);
+            },
+        }
     }
 };
 
@@ -306,16 +355,26 @@ pub fn main() !void {
 
     const filename = "nvfp4/model.safetensors";
 
+    var reg: st.Registry = try .fromPath(a, io, filename);
+    defer reg.deinit();
+    const jobs = try getAllNVFP4Jobs(a, &reg);
+    defer freeJobs(a, jobs);
+
     const warmer_count = 4;
     var seq: BenchRes = undefined;
     var simd: BenchRes = undefined;
     var seq_job: BenchRes = undefined;
     var simd_job: BenchRes = undefined;
+    var seq_job_seq: BenchRes = undefined;
+    var simd_job_seq: BenchRes = undefined;
+
     for (0..warmer_count) |_| {
         seq = try benchmark(a, io, filename, .sequential);
         simd = try benchmark(a, io, filename, .simd);
-        seq_job = try benchmarkJobs(a, io, filename, .sequential);
-        simd_job = try benchmarkJobs(a, io, filename, .simd);
+        seq_job = try benchmarkJobs(io, jobs, .sequential);
+        simd_job = try benchmarkJobs(io, jobs, .simd);
+        seq_job_seq = try benchmarkJobsSequentially(io, jobs, .sequential);
+        simd_job_seq = try benchmarkJobsSequentially(io, jobs, .simd);
     }
     print("Sequential benchmark: {f}\n", .{seq});
     print("SIMD benchmark: {f}\n", .{simd});
@@ -330,6 +389,14 @@ pub fn main() !void {
     print(
         "SIMD JOB benchmark / Sequential JOB benchmark: {d:.[1]}%\n",
         .{ simd_job.ratio(seq_job), 2 },
+    );
+    print("\n", .{});
+
+    print("Sequential JOB SEQ benchmark: {f}\n", .{seq_job_seq});
+    print("SIMD JOB SEQ benchmark: {f}\n", .{simd_job_seq});
+    print(
+        "SIMD JOB SEQ benchmark / Sequential JOB SEQ benchmark: {d:.[1]}%\n",
+        .{ simd_job_seq.ratio(seq_job_seq), 2 },
     );
     print("\n", .{});
 
