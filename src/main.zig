@@ -399,6 +399,11 @@ pub fn main() !void {
         .{ simd_job_seq.ratio(seq_job_seq), 2 },
     );
     print("\n", .{});
+    print(
+        "SIMD JOB benchmark / Sequential benchmark: {d:.[1]}%\n",
+        .{ simd_job.ratio(seq), 2 },
+    );
+    print("\n", .{});
 
     var arena: std.heap.ArenaAllocator = .init(a);
     defer arena.deinit();
