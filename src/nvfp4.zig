@@ -176,15 +176,6 @@ fn e2m1ByteTable(comptime shift: u5) @Vector(16, u8) {
 
 const e2m1_byte3_table = e2m1ByteTable(24);
 const e2m1_byte2_table = e2m1ByteTable(16);
-const e2m1_byte1_table = e2m1ByteTable(8);
-const e2m1_byte0_table = e2m1ByteTable(0);
-
-comptime {
-    @compileLog(std.fmt.comptimePrint("e2m1_byte3_table: {}", .{e2m1_byte3_table}));
-    @compileLog(std.fmt.comptimePrint("e2m1_byte2_table: {}", .{e2m1_byte2_table}));
-    @compileLog(std.fmt.comptimePrint("e2m1_byte1_table: {}", .{e2m1_byte1_table}));
-    @compileLog(std.fmt.comptimePrint("e2m1_byte0_table: {}", .{e2m1_byte0_table}));
-}
 
 inline fn tblAsmImpl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
     return asm ("tbl %[out].16b, {%[t].16b}, %[i].16b"
@@ -267,11 +258,8 @@ fn e2m1RangeImpl(
                 const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
                 const b3 = tbl(e2m1_byte3_table, idx);
                 const b2 = tbl(e2m1_byte2_table, idx);
-                const b1 = tbl(e2m1_byte1_table, idx);
-                const b0 = tbl(e2m1_byte0_table, idx);
                 const hi16: @Vector(16, u16) = @bitCast(@shuffle(u8, b2, b3, interleave));
-                const lo16: @Vector(16, u16) = @bitCast(@shuffle(u8, b0, b1, interleave));
-                const full = (@as(@Vector(16, u32), hi16) << @splat(16)) + lo16;
+                const full = (@as(@Vector(16, u32), hi16) << @splat(16));
                 res[k * 16 ..][0..16].* = full;
             }
             const bits: @Vector(n * 2, u32) = res;
