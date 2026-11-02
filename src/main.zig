@@ -52,6 +52,24 @@ fn getAllNVFP4Tensors(
     return try tensors.toOwnedSlice(a);
 }
 
+fn getAllNVFP4Jobs(
+    a: std.mem.Allocator,
+    r: *const st.Registry,
+) ![]Job {
+    var jobs = std.ArrayList(Job).empty;
+    errdefer jobs.deinit(a);
+
+    const tensors = try getAllNVFP4Tensors(a, r);
+    defer a.free(tensors);
+
+    for (tensors) |t| {
+        const buffer = try a.alloc(u8, t.dequantByteLen());
+        try jobs.append(a, .{ .dest = buffer, .tensor = t });
+    }
+
+    return try jobs.toOwnedSlice(a);
+}
+
 fn benchmark(
     a: std.mem.Allocator,
     io: Io,
