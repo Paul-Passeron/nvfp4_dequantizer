@@ -215,6 +215,14 @@ fn interleaveMask(comptime n: comptime_int) [n * 2]i32 {
     return idx;
 }
 
+inline fn merge2U8aAsU16(
+    comptime n: comptime_int,
+    lo: @Vector(n, u8),
+    hi: @Vector(n, u8),
+) @Vector(n, u16) {
+    return @bitCast(@shuffle(u8, lo, hi, interleaveMask(n)));
+}
+
 fn e2m1RangeImpl(
     comptime n: comptime_int,
     algo: e2m1Alg,
@@ -252,13 +260,12 @@ fn e2m1RangeImpl(
             comptime std.debug.assert(n * 2 % 16 == 0);
             const bytes: @Vector(n, u8) = packed_bytes.*;
             const nibbles: [n * 2]u8 = split_bytes_into_nibbles(n, u8, bytes);
-            const interleave = comptime interleaveMask(16);
             var res: [n * 2]u32 = undefined;
             inline for (0..n * 2 / 16) |k| {
                 const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
                 const b3 = tbl(e2m1_byte3_table, idx);
                 const b2 = tbl(e2m1_byte2_table, idx);
-                const hi16: @Vector(16, u16) = @bitCast(@shuffle(u8, b2, b3, interleave));
+                const hi16 = merge2U8aAsU16(16, b2, b3);
                 const full = (@as(@Vector(16, u32), hi16) << @splat(16));
                 res[k * 16 ..][0..16].* = full;
             }
