@@ -197,6 +197,50 @@ fn runKernelBenchmarks(
 
 // TODO: Look into how the ZML framework actually does multicore io
 
+pub const Job = struct {
+    tensor: nvfp4.Tensor,
+
+    /// length must be `tensor.dequantByteLen()`
+    dest: []u8,
+
+    err: ?anyerror,
+
+    fn run(self: *Job, io: std.Io, algo: nvfp4.DequantAlgo) void {
+        self.runImpl(io, algo) catch |err| {
+            self.err = err;
+            return;
+        };
+    }
+
+    fn runImpl(self: *Job, io: Io, algo: nvfp4.DequantAlgo) !void {
+        var packed_buffer: [32 * 1024]u8 = undefined;
+        var scale_buffer: [32 * 1024]u8 = undefined;
+        var reader = try self.tensor.reader(io, .{
+            .packed_bytes = &packed_buffer,
+            .scales = &scale_buffer,
+        }, algo);
+        defer reader.deinit();
+        var w = Io.Writer.fixed(self.dest);
+        _ = try reader.interface.streamRemaining(&w);
+    }
+};
+
+fn dequantizeAll(io: Io, algo: nvfp4.DequantAlgo, jobs: []Job) Io.Cancelable!void {
+    var group: Io.Group = .init;
+    for (jobs) |*job| {
+        group.async(io, Job.run, .{ job, io, algo });
+    }
+    try group.await(io);
+}
+
+test "dequantizeAll on empty" {
+    const a = std.heap.c_allocator;
+    var threaded: Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    _ = try dequantizeAll(io, .sequential, &.{});
+}
+
 pub fn main() !void {
     const a = std.heap.c_allocator;
     var threaded: Io.Threaded = .init(a, .{});
