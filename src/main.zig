@@ -347,6 +347,31 @@ test "dequantizeAll on empty" {
     _ = try dequantizeAll(io, .{ .ordering = .sequential }, &.{});
 }
 
+test "all benchmarks work with all configs" {
+    const builtin = @import("builtin");
+    // Don't run in debug because it takes forever
+    if (builtin.mode == .debug) return;
+    const a = std.heap.c_allocator;
+    var threaded: Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const filename = "nvfp4/model.safetensors";
+
+    var reg: st.Registry = try .fromPath(a, io, filename);
+    defer reg.deinit();
+    const jobs = try getAllNVFP4Jobs(a, &reg);
+    defer freeJobs(a, jobs);
+    for ([_]nvfp4.DequantAlgo{ .sequential, .simd }) |ord| {
+        for ([_]nvfp4.e2m1Alg{ .bits, .look_up_table, .tbl }) |alg| {
+            const config: nvfp4.DequantConfig = .{ .ordering = ord, .e2m1 = alg };
+            _ = try benchmark(a, io, filename, config);
+            _ = try benchmarkJobs(io, jobs, config);
+            _ = try benchmarkJobsSequentially(io, jobs, config);
+        }
+    }
+}
+
 pub fn main() !void {
     const a = std.heap.c_allocator;
     var threaded: Io.Threaded = .init(a, .{});
