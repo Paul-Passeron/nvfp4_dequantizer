@@ -179,6 +179,13 @@ const e2m1_byte2_table = e2m1ByteTable(16);
 const e2m1_byte1_table = e2m1ByteTable(8);
 const e2m1_byte0_table = e2m1ByteTable(0);
 
+comptime {
+    @compileLog(std.fmt.comptimePrint("e2m1_byte3_table: {}", .{e2m1_byte3_table}));
+    @compileLog(std.fmt.comptimePrint("e2m1_byte2_table: {}", .{e2m1_byte2_table}));
+    @compileLog(std.fmt.comptimePrint("e2m1_byte1_table: {}", .{e2m1_byte1_table}));
+    @compileLog(std.fmt.comptimePrint("e2m1_byte0_table: {}", .{e2m1_byte0_table}));
+}
+
 inline fn tblAsmImpl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
     return asm ("tbl %[out].16b, {%[t].16b}, %[i].16b"
         : [out] "=w" (-> @Vector(16, u8)),
