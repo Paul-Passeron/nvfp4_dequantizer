@@ -180,6 +180,13 @@ pub const TensorReader = struct {
         }
     }
 
+    pub fn take(self: *TensorReader, n: usize) ![]const u8 {
+        if (n > self.remaining) return error.EndOfStream;
+        const bytes = try self.file_reader.interface.take(n);
+        self.advance_by(n);
+        return bytes;
+    }
+
     fn discard(
         io_reader: *std.Io.Reader,
         limit: std.Io.Limit,
