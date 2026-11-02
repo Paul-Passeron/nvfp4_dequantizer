@@ -344,7 +344,7 @@ test "dequantizeAll on empty" {
     var threaded: Io.Threaded = .init(a, .{});
     defer threaded.deinit();
     const io = threaded.io();
-    _ = try dequantizeAll(io, .sequential, &.{});
+    _ = try dequantizeAll(io, .{ .ordering = .sequential }, &.{});
 }
 
 pub fn main() !void {

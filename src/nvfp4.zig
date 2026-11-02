@@ -275,8 +275,8 @@ test "e2m1 tbl" {
     var values: [128]u8 = undefined;
     // even bytes then odd bytes: covers every lo and hi nibble
     for (&values, 0..) |*v, i| v.* = @intCast(i * 2 + (i >> 6));
-    const res: [256]f32 = e2m1Range(128, &values, .tbl);
-    const expected: [256]f32 = e2m1Range(128, &values, .look_up_table);
+    const res: [256]f32 = e2m1Range(128, .tbl, &values);
+    const expected: [256]f32 = e2m1Range(128, .look_up_table, &values);
     for (res, expected) |a, b| {
         try std.testing.expectEqual(@as(u32, @bitCast(b)), @as(u32, @bitCast(a)));
     }
@@ -291,7 +291,7 @@ test "e2m1 lut" {
         split[2 * i + 1] = hi;
     }
 
-    const res = e2m1Range(8, &values, .look_up_table);
+    const res = e2m1Range(8, .look_up_table, &values);
     const simd: [16]f32 = res;
     for (simd, split) |a, b| {
         const decode = decodeE2M1(b);
@@ -308,7 +308,7 @@ test "e2m1 bits" {
         split[2 * i + 1] = hi;
     }
 
-    const res = e2m1Range(8, &values, .bits);
+    const res = e2m1Range(8, .bits, &values);
     const simd: [16]f32 = res;
     for (simd, split) |a, b| {
         const decode = decodeE2M1(b);
@@ -422,7 +422,7 @@ fn compute_vec_lengths() [lengths_size]u32 {
 
 const vec_lengths: [lengths_size]u32 = compute_vec_lengths();
 
-pub noinline fn dequantRangeSimd(
+noinline fn dequantRangeSimd(
     algo: e2m1Alg,
     packed_bytes: []const u8,
     scales: []const u8,
@@ -447,8 +447,16 @@ pub noinline fn dequantRangeSimd(
     }
 }
 
+const default_e2m1_algo: e2m1Alg = blk: {
+    if (builtin.cpu.arch == .aarch64) {
+        break :blk .tbl;
+    } else {
+        break :blk .look_up_table;
+    }
+};
+
 pub const DequantConfig = struct {
-    e2m1: e2m1Alg = if (builtin.cpu.arch == .aarch64) .tbl else .look_up_table,
+    e2m1: e2m1Alg = default_e2m1_algo,
     ordering: DequantAlgo,
 };
 
@@ -743,7 +751,7 @@ test "nvfp4 and f32 are the same sequential" {
     var actual_reader = try t.reader(io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
-    }, .sequential);
+    }, .{ .ordering = .sequential });
     defer actual_reader.deinit();
 
     var expected_buffer: [4096]u8 = undefined;
@@ -805,7 +813,7 @@ test "nvfp4 and f32 are the same simd" {
     var actual_reader = try t.reader(io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
-    }, .simd);
+    }, .{ .ordering = .simd });
     defer actual_reader.deinit();
 
     var expected_buffer: [4096]u8 = undefined;
@@ -855,7 +863,7 @@ test "nvfp4 is the same for sequential and simd" {
     var actual_reader = try t.reader(io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
-    }, .simd);
+    }, .{ .ordering = .simd });
     defer actual_reader.deinit();
 
     var expected_packed_buffer: [4096]u8 = undefined;
@@ -863,7 +871,7 @@ test "nvfp4 is the same for sequential and simd" {
     var expected_reader = try t.reader(io, .{
         .packed_bytes = &expected_packed_buffer,
         .scales = &expected_scales_buffer,
-    }, .sequential);
+    }, .{ .ordering = .sequential });
     defer expected_reader.deinit();
 
     var actual_chunk: [64 * 1024]u8 align(@alignOf(f32)) = undefined;
@@ -921,7 +929,7 @@ test "nvfp4 reader through a small interface buffer sequential" {
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
         .interface = &interface_buffer,
-    }, .sequential);
+    }, .{ .ordering = .sequential });
     defer actual_reader.deinit();
 
     var expected_file_buffer: [4096]u8 = undefined;
@@ -979,7 +987,7 @@ test "nvfp4 reader through a small interface buffer simd" {
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
         .interface = &interface_buffer,
-    }, .simd);
+    }, .{ .ordering = .simd });
     defer actual_reader.deinit();
 
     var expected_file_buffer: [4096]u8 = undefined;
