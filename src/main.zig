@@ -93,7 +93,7 @@ fn benchmark(
     a: std.mem.Allocator,
     io: Io,
     filename: []const u8,
-    algo: nvfp4.DequantAlgo,
+    config: nvfp4.DequantConfig,
 ) !BenchRes {
     const buff_size = 32 * 1024;
     var buffer: [buff_size]u8 = undefined;
@@ -117,7 +117,7 @@ fn benchmark(
         var reader = try t.reader(io, .{
             .packed_bytes = &packed_buffer,
             .scales = &scales_buffer,
-        }, algo);
+        }, config);
         defer reader.deinit();
 
         bytes += try reader.interface.streamRemaining(&aw.writer);
@@ -133,7 +133,7 @@ fn benchmark(
 fn benchmarkJobs(
     io: Io,
     jobs: []Job,
-    algo: nvfp4.DequantAlgo,
+    config: nvfp4.DequantConfig,
 ) !BenchRes {
     var bytes: usize = 0;
     for (jobs) |*j| {
@@ -143,7 +143,7 @@ fn benchmarkJobs(
 
     const clock = Clock.awake;
     const start = clock.now(io);
-    try dequantizeAll(io, algo, jobs);
+    try dequantizeAll(io, config, jobs);
     const end = clock.now(io);
 
     for (jobs) |j| {
@@ -159,7 +159,7 @@ fn benchmarkJobs(
 fn benchmarkJobsSequentially(
     io: Io,
     jobs: []Job,
-    algo: nvfp4.DequantAlgo,
+    config: nvfp4.DequantConfig,
 ) !BenchRes {
     var bytes: usize = 0;
     for (jobs) |*j| {
@@ -171,7 +171,7 @@ fn benchmarkJobsSequentially(
     const start = clock.now(io);
     for (jobs) |*j| {
         // Doesn't set err
-        try j.runImpl(io, algo);
+        try j.runImpl(io, config);
     }
     const end = clock.now(io);
 
@@ -229,7 +229,7 @@ fn loadKernelInputs(
 fn kernelBenchmark(
     io: Io,
     inputs: []const KernelInput,
-    algo: nvfp4.DequantAlgo,
+    config: nvfp4.DequantConfig,
     out: []f32,
 ) !BenchRes {
     const chunk_blocks = out.len / 16;
@@ -244,7 +244,7 @@ fn kernelBenchmark(
         while (i < input.scales.len) : (i += chunk_blocks) {
             const k = @min(chunk_blocks, input.scales.len - i);
             try nvfp4.dequantRange(
-                algo,
+                config,
                 input.packed_bytes[i * 8 ..][0 .. k * 8],
                 input.scales[i..][0..k],
                 input.inv_global,
@@ -276,8 +276,8 @@ fn runKernelBenchmarks(
     var seq: BenchRes = undefined;
     var simd: BenchRes = undefined;
     for (0..warmer_count) |_| {
-        seq = try kernelBenchmark(io, inputs, .sequential, out);
-        simd = try kernelBenchmark(io, inputs, .simd, out);
+        seq = try kernelBenchmark(io, inputs, .{ .ordering = .sequential }, out);
+        simd = try kernelBenchmark(io, inputs, .{ .ordering = .simd }, out);
     }
     print("Sequential kernel ({s} output): {f}\n", .{ name, seq });
     print("SIMD kernel ({s} output): {f}\n", .{ name, simd });
@@ -302,20 +302,20 @@ pub const Job = struct {
 
     err: ?anyerror = null,
 
-    fn run(self: *Job, io: std.Io, algo: nvfp4.DequantAlgo) void {
-        self.runImpl(io, algo) catch |err| {
+    fn run(self: *Job, io: std.Io, config: nvfp4.DequantConfig) void {
+        self.runImpl(io, config) catch |err| {
             self.err = err;
             return;
         };
     }
 
-    fn runImpl(self: *Job, io: Io, algo: nvfp4.DequantAlgo) !void {
+    fn runImpl(self: *Job, io: Io, config: nvfp4.DequantConfig) !void {
         var packed_buffer: [32 * 1024]u8 = undefined;
         var scale_buffer: [32 * 1024]u8 = undefined;
         var reader = try self.tensor.reader(io, .{
             .packed_bytes = &packed_buffer,
             .scales = &scale_buffer,
-        }, algo);
+        }, config);
         defer reader.deinit();
         switch (self.dest) {
             .mem => |buffer| {
@@ -331,10 +331,10 @@ pub const Job = struct {
     }
 };
 
-fn dequantizeAll(io: Io, algo: nvfp4.DequantAlgo, jobs: []Job) Io.Cancelable!void {
+fn dequantizeAll(io: Io, config: nvfp4.DequantConfig, jobs: []Job) Io.Cancelable!void {
     var group: Io.Group = .init;
     for (jobs) |*job| {
-        group.async(io, Job.run, .{ job, io, algo });
+        group.async(io, Job.run, .{ job, io, config });
     }
     try group.await(io);
 }
@@ -369,12 +369,12 @@ pub fn main() !void {
     var simd_job_seq: BenchRes = undefined;
 
     for (0..warmer_count) |_| {
-        seq = try benchmark(a, io, filename, .sequential);
-        simd = try benchmark(a, io, filename, .simd);
-        seq_job = try benchmarkJobs(io, jobs, .sequential);
-        simd_job = try benchmarkJobs(io, jobs, .simd);
-        seq_job_seq = try benchmarkJobsSequentially(io, jobs, .sequential);
-        simd_job_seq = try benchmarkJobsSequentially(io, jobs, .simd);
+        seq = try benchmark(a, io, filename, .{ .ordering = .sequential });
+        simd = try benchmark(a, io, filename, .{ .ordering = .simd });
+        seq_job = try benchmarkJobs(io, jobs, .{ .ordering = .sequential });
+        simd_job = try benchmarkJobs(io, jobs, .{ .ordering = .simd });
+        seq_job_seq = try benchmarkJobsSequentially(io, jobs, .{ .ordering = .sequential });
+        simd_job_seq = try benchmarkJobsSequentially(io, jobs, .{ .ordering = .simd });
     }
     print("Sequential benchmark: {f}\n", .{seq});
     print("SIMD benchmark: {f}\n", .{simd});

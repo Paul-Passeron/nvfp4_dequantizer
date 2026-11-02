@@ -2,38 +2,6 @@ const std = @import("std");
 
 pub const DataType = enum { U8, U16, U32, U64, F16, F32, F64, BF16, F8_E4M3 };
 
-pub const RawTensorInfo = struct {
-    dtype: DataType,
-    shape: []u64,
-    data_offsets: [2]usize,
-};
-
-pub const RawTensor = struct {
-    name: []const u8,
-    info: RawTensorInfo,
-
-    /// Takes ownership of the values inside the tensor.
-    pub fn into_tensorInfo(self: @This()) TensorInfo {
-        const offset = self.info.data_offsets[0];
-        const byte_len = self.info.data_offsets[1] - offset;
-        return .{
-            .name = self.name,
-            .dtype = self.info.dtype,
-            .shape = self.info.shape,
-            .byte_len = byte_len,
-            .offset = offset,
-        };
-    }
-};
-
-pub const TensorInfo = struct {
-    name: []const u8,
-    dtype: DataType,
-    shape: []u64,
-    offset: usize,
-    byte_len: usize,
-};
-
 fn expectedDataType(comptime T: type) ?DataType {
     switch (T) {
         f16 => return .F16,
@@ -368,6 +336,12 @@ pub const Registry = struct {
             // - Keep it as a raw JSON object ?
             // - Do something else ?
             if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
+
+            const RawTensorInfo = struct {
+                dtype: DataType,
+                shape: []u64,
+                data_offsets: [2]usize,
+            };
 
             // TODO: Have RawTensorInfo be types local to this function,
             // or at least to the registry

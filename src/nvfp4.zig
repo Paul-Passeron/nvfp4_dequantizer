@@ -162,7 +162,6 @@ fn split_bytes_into_nibbles(
 }
 
 const e2m1Alg = enum { look_up_table, bits, tbl };
-const e2m1_alg: e2m1Alg = .tbl;
 
 fn e2m1ByteTable(comptime shift: u5) @Vector(16, u8) {
     var t: [16]u8 = undefined;
@@ -200,13 +199,6 @@ inline fn tbl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
     }
 }
 
-inline fn e2m1Range(
-    comptime n: comptime_int,
-    packed_bytes: *const [n]u8,
-) @Vector(n * 2, f32) {
-    return e2m1RangeImpl(n, e2m1_alg, packed_bytes);
-}
-
 fn interleaveMask(comptime n: comptime_int) [n * 2]i32 {
     var idx: [n * 2]i32 = undefined;
     for (0..n) |i| {
@@ -231,7 +223,7 @@ inline fn decodeE2M1FromIndices(idx: @Vector(16, u8)) @Vector(16, u32) {
     return (@as(@Vector(16, u32), hi16) << @splat(16));
 }
 
-fn e2m1RangeImpl(
+fn e2m1Range(
     comptime n: comptime_int,
     algo: e2m1Alg,
     packed_bytes: *const [n]u8,
@@ -283,8 +275,8 @@ test "e2m1 tbl" {
     var values: [128]u8 = undefined;
     // even bytes then odd bytes: covers every lo and hi nibble
     for (&values, 0..) |*v, i| v.* = @intCast(i * 2 + (i >> 6));
-    const res: [256]f32 = e2m1RangeImpl(128, .tbl, &values);
-    const expected: [256]f32 = e2m1RangeImpl(128, .look_up_table, &values);
+    const res: [256]f32 = e2m1Range(128, &values, .tbl);
+    const expected: [256]f32 = e2m1Range(128, &values, .look_up_table);
     for (res, expected) |a, b| {
         try std.testing.expectEqual(@as(u32, @bitCast(b)), @as(u32, @bitCast(a)));
     }
@@ -299,7 +291,7 @@ test "e2m1 lut" {
         split[2 * i + 1] = hi;
     }
 
-    const res = e2m1RangeImpl(8, .look_up_table, &values);
+    const res = e2m1Range(8, &values, .look_up_table);
     const simd: [16]f32 = res;
     for (simd, split) |a, b| {
         const decode = decodeE2M1(b);
@@ -316,7 +308,7 @@ test "e2m1 bits" {
         split[2 * i + 1] = hi;
     }
 
-    const res = e2m1RangeImpl(8, .bits, &values);
+    const res = e2m1Range(8, &values, .bits);
     const simd: [16]f32 = res;
     for (simd, split) |a, b| {
         const decode = decodeE2M1(b);
@@ -400,12 +392,13 @@ const e4m3_table: [256]f32 = blk: {
 
 inline fn dequantBlocks(
     comptime B: comptime_int,
+    algo: e2m1Alg,
     packed_bytes: *const [B * 8]u8,
     scales: *const [B]u8,
     inv_global: f32,
     out: *align(1) [B * 16]f32,
 ) void {
-    const dequantized = e2m1Range(B * 8, packed_bytes);
+    const dequantized = e2m1Range(B * 8, algo, packed_bytes);
     const scale_vector = e4m3Range(B, scales, inv_global);
     const broadcasted = broadcast(B, 16, f32, scale_vector);
     const res = dequantized * broadcasted;
@@ -430,6 +423,7 @@ fn compute_vec_lengths() [lengths_size]u32 {
 const vec_lengths: [lengths_size]u32 = compute_vec_lengths();
 
 pub noinline fn dequantRangeSimd(
+    algo: e2m1Alg,
     packed_bytes: []const u8,
     scales: []const u8,
     inv_global: f32,
@@ -441,6 +435,7 @@ pub noinline fn dequantRangeSimd(
             const current_block = scales.len - remaining_blocks;
             dequantBlocks(
                 C,
+                algo,
                 packed_bytes[current_block * 8 ..][0 .. C * 8],
                 scales[current_block..][0..C],
                 inv_global,
@@ -452,15 +447,20 @@ pub noinline fn dequantRangeSimd(
     }
 }
 
+pub const DequantConfig = struct {
+    e2m1: e2m1Alg = if (builtin.cpu.arch == .aarch64) .tbl else .look_up_table,
+    ordering: DequantAlgo,
+};
+
 pub fn dequantRange(
-    algo: DequantAlgo,
+    config: DequantConfig,
     packed_bytes: []const u8,
     scales: []const u8,
     inv_global: f32,
     out: []align(1) f32,
 ) error{InvalidDequantRanges}!void {
     try checkDequantRangeInput(packed_bytes, scales, out);
-    switch (algo) {
+    switch (config.ordering) {
         .sequential => {
             for (scales, 0..) |scale, i| {
                 const bytes_slice = packed_bytes[i * 8 ..][0..8];
@@ -469,7 +469,7 @@ pub fn dequantRange(
             }
         },
         .simd => {
-            dequantRangeSimd(packed_bytes, scales, inv_global, out);
+            dequantRangeSimd(config.e2m1, packed_bytes, scales, inv_global, out);
         },
     }
 }
@@ -541,9 +541,9 @@ pub const Tensor = struct {
         self: *const Tensor,
         io: std.Io,
         buffers: TensorReader.Buffers,
-        algo: DequantAlgo,
+        config: DequantConfig,
     ) !TensorReader {
-        return TensorReader.init(io, self, buffers, algo);
+        return TensorReader.init(io, self, buffers, config);
     }
 };
 
@@ -572,7 +572,7 @@ pub const TensorReader = struct {
     pending: [BLOCK_COUNT]f32 = undefined,
     pending_index: usize = @sizeOf([BLOCK_COUNT]f32),
 
-    algo: DequantAlgo,
+    config: DequantConfig,
 
     interface: std.Io.Reader,
 
@@ -639,7 +639,7 @@ pub const TensorReader = struct {
         const input = try self.readInputs(k * PACKED_PER_BLOCK, k);
         const dest_f32: []align(1) f32 = std.mem.bytesAsSlice(f32, dest[0..n]);
         dequantRange(
-            self.algo,
+            self.config,
             input.bytes,
             input.scales,
             self.inv_global,
@@ -687,7 +687,7 @@ pub const TensorReader = struct {
         io: std.Io,
         tensor: *const Tensor,
         buffers: Buffers,
-        algo: DequantAlgo,
+        config: DequantConfig,
     ) !TensorReader {
         const packed_reader: st.TensorReader = try .init(
             io,
@@ -708,7 +708,7 @@ pub const TensorReader = struct {
             .inv_global = inv_global,
             .remaining_blocks = remaining_blocks,
             .interface = initInterface(buffers.interface),
-            .algo = algo,
+            .config = config,
         };
     }
 };
