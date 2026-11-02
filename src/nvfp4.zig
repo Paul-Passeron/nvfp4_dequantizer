@@ -164,6 +164,28 @@ fn split_bytes_into_nibbles(
 const e2m1Alg = enum { look_up_table, bits };
 const e2m1_alg: e2m1Alg = .look_up_table;
 
+inline fn tblAsmImpl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
+    return asm ("tbl %[out].16b, {%[t].16b}, %[i].16b"
+        : [out] "=w" (-> @Vector(16, u8)),
+        : [t] "w" (table),
+          [i] "w" (idx),
+    );
+}
+
+inline fn tblGeneralImpl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
+    var res: [16]u8 = undefined;
+    inline for (0..16) |i| res[i] = table[idx[i]];
+    return res;
+}
+
+inline fn tbl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
+    if (builtin.cpu.arch == .aarch64) {
+        return tblAsmImpl(table, idx);
+    } else {
+        return tblGeneralImpl(table, idx);
+    }
+}
+
 inline fn e2m1Range(
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
