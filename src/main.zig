@@ -302,7 +302,7 @@ pub const Job = struct {
 
     err: ?anyerror = null,
 
-    fn run(self: *Job, io: std.Io, config: nvfp4.DequantConfig) void {
+    fn run(self: *Job, io: Io, config: nvfp4.DequantConfig) void {
         self.runImpl(io, config) catch |err| {
             self.err = err;
             return;
