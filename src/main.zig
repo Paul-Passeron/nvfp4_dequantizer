@@ -111,6 +111,41 @@ fn benchmark(
     };
 }
 
+fn benchmarkJobs(
+    a: std.mem.Allocator,
+    io: Io,
+    filename: []const u8,
+    algo: nvfp4.DequantAlgo,
+) !BenchRes {
+    var reg: st.Registry = try .fromPath(a, io, filename);
+    defer reg.deinit();
+
+    const jobs = try getAllNVFP4Jobs(a, &reg);
+    defer a.free(jobs);
+    defer for (jobs) |j| {
+        a.free(j.dest);
+    };
+
+    var bytes: usize = 0;
+    for (jobs) |j| {
+        bytes += j.tensor.dequantByteLen();
+    }
+
+    const clock = Clock.awake;
+    const start = clock.now(io);
+    try dequantizeAll(io, algo, jobs);
+    const end = clock.now(io);
+
+    for (jobs) |j| {
+        if (j.err) |err| return err;
+    }
+
+    return .{
+        .duration = start.durationTo(end),
+        .bytes_read = bytes,
+    };
+}
+
 const KernelInput = struct {
     packed_bytes: []u8,
     scales: []u8,
@@ -225,7 +260,7 @@ pub const Job = struct {
     /// length must be `tensor.dequantByteLen()`
     dest: []u8,
 
-    err: ?anyerror,
+    err: ?anyerror = null,
 
     fn run(self: *Job, io: std.Io, algo: nvfp4.DequantAlgo) void {
         self.runImpl(io, algo) catch |err| {
@@ -274,15 +309,27 @@ pub fn main() !void {
     const warmer_count = 4;
     var seq: BenchRes = undefined;
     var simd: BenchRes = undefined;
+    var seq_job: BenchRes = undefined;
+    var simd_job: BenchRes = undefined;
     for (0..warmer_count) |_| {
         seq = try benchmark(a, io, filename, .sequential);
         simd = try benchmark(a, io, filename, .simd);
+        seq_job = try benchmarkJobs(a, io, filename, .sequential);
+        simd_job = try benchmarkJobs(a, io, filename, .simd);
     }
     print("Sequential benchmark: {f}\n", .{seq});
     print("SIMD benchmark: {f}\n", .{simd});
     print(
         "SIMD benchmark / Sequential benchmark: {d:.[1]}%\n",
         .{ simd.ratio(seq), 2 },
+    );
+    print("\n", .{});
+
+    print("Sequential JOB benchmark: {f}\n", .{seq_job});
+    print("SIMD JOB benchmark: {f}\n", .{simd_job});
+    print(
+        "SIMD JOB benchmark / Sequential JOB benchmark: {d:.[1]}%\n",
+        .{ simd_job.ratio(seq_job), 2 },
     );
     print("\n", .{});
 
