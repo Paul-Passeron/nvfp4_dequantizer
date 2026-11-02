@@ -187,6 +187,8 @@ fn runKernelBenchmarks(
     );
 }
 
+// TODO: Look into how the ZML framework actually does multicore io
+
 pub fn main() !void {
     const a = std.heap.c_allocator;
     var threaded: Io.Threaded = .init(a, .{});
