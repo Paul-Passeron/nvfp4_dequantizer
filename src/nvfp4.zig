@@ -191,6 +191,7 @@ inline fn tblGeneralImpl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(1
     return res;
 }
 
+// From <https://ziggit.dev/t/simd-and-lookup-tables/15852/4>
 inline fn tbl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
     if (builtin.cpu.arch == .aarch64) {
         return tblAsmImpl(table, idx);
@@ -613,10 +614,10 @@ pub const TensorReader = struct {
         const blocks_to_write = dest.len / DEQUANT_BLOCK_BYTE_LEN;
 
         if (blocks_to_write == 0) {
-            var packed_bytes: [PACKED_PER_BLOCK]u8 = undefined;
-            var scale: [1]u8 = undefined;
-            try self.readInputs(&packed_bytes, &scale);
-            dequantBlock(&packed_bytes, scale[0], self.inv_global, &self.pending);
+            const input = try self.readInputs(PACKED_PER_BLOCK, 1);
+            const packed_bytes = input.bytes[0..PACKED_PER_BLOCK];
+            const scale = input.scales[0];
+            dequantBlock(packed_bytes, scale, self.inv_global, &self.pending);
             self.remaining_blocks -= 1;
             const n = try io_writer.write(limit.slice(pending_bytes));
             self.pending_index = n;
@@ -635,14 +636,12 @@ pub const TensorReader = struct {
         // and blocks_to_write = dest.len / DEQUANT_BLOCK_BYTE_LEN
         // so n <= dest.len
 
-        var packed_bytes: [CHUNK_BLOCKS * PACKED_PER_BLOCK]u8 = undefined;
-        var scales: [CHUNK_BLOCKS]u8 = undefined;
-        try self.readInputs(packed_bytes[0 .. k * PACKED_PER_BLOCK], scales[0..k]);
+        const input = try self.readInputs(k * PACKED_PER_BLOCK, k);
         const dest_f32: []align(1) f32 = std.mem.bytesAsSlice(f32, dest[0..n]);
         dequantRange(
             self.algo,
-            packed_bytes[0 .. k * PACKED_PER_BLOCK],
-            scales[0..k],
+            input.bytes,
+            input.scales,
             self.inv_global,
             dest_f32,
         ) catch unreachable;
@@ -652,11 +651,15 @@ pub const TensorReader = struct {
         return n;
     }
 
-    fn readInputs(self: *TensorReader, packed_bytes: []u8, scales: []u8) !void {
-        self.packed_reader.interface.readSliceAll(packed_bytes) catch |e|
-            return mapErr(e);
-        self.scale_reader.interface.readSliceAll(scales) catch |e|
-            return mapErr(e);
+    const Input = struct {
+        bytes: []const u8,
+        scales: []const u8,
+    };
+
+    fn readInputs(self: *TensorReader, packed_len: usize, scale_len: usize) !Input {
+        const bytes = self.packed_reader.take(packed_len) catch |e| return mapErr(e);
+        const scales = self.scale_reader.take(scale_len) catch |e| return mapErr(e);
+        return .{ .bytes = bytes, .scales = scales };
     }
 
     fn mapErr(e: std.Io.Reader.Error) std.Io.Reader.Error {
