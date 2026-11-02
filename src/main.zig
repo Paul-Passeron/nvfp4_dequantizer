@@ -262,33 +262,6 @@ fn kernelBenchmark(
     };
 }
 
-fn runKernelBenchmarks(
-    a: std.mem.Allocator,
-    io: Io,
-    inputs: []const KernelInput,
-    name: []const u8,
-    out_size: usize,
-) !void {
-    const out = try a.alloc(f32, out_size / @sizeOf(f32));
-    defer a.free(out);
-
-    const warmer_count = 4;
-    var seq: BenchRes = undefined;
-    var simd: BenchRes = undefined;
-    for (0..warmer_count) |_| {
-        seq = try kernelBenchmark(io, inputs, .{ .ordering = .sequential }, out);
-        simd = try kernelBenchmark(io, inputs, .{ .ordering = .simd }, out);
-    }
-    print("Sequential kernel ({s} output): {f}\n", .{ name, seq });
-    print("SIMD kernel ({s} output): {f}\n", .{ name, simd });
-    print(
-        "SIMD kernel / Sequential kernel ({s} output): {d:.[2]}%\n",
-        .{ name, simd.ratio(seq), 2 },
-    );
-}
-
-// TODO: Look into how the ZML framework actually does multicore io
-
 pub const Destination = union(enum) {
     /// length must be `tensor.dequantByteLen()`
     mem: []u8,
@@ -372,69 +345,132 @@ test "all benchmarks work with all configs" {
     }
 }
 
+fn runBenchmark(
+    self: Benchmark,
+    config: nvfp4.DequantConfig,
+    a: std.mem.Allocator,
+    io: Io,
+    filename: []const u8,
+) !BenchRes {
+    const res = try self.run(config, a, io, filename);
+    const name = self.name();
+    print("{s} benchmark: {f}\n", .{ name, res });
+    return res;
+}
+
+const Benchmark = union(enum) {
+    kernel: struct {
+        out: []f32,
+        is_big: bool,
+    },
+    regular,
+    jobs,
+    jobs_seq,
+
+    fn name(self: Benchmark) []const u8 {
+        switch (self) {
+            .kernel => |info| return if (info.is_big)
+                "Kernel (BIG)"
+            else
+                "Kernel (SMALL)",
+            .regular => return "Regular",
+            .jobs => return "Jobs",
+            .jobs_seq => return "Jobs SEQ",
+        }
+    }
+
+    fn run(
+        self: Benchmark,
+        config: nvfp4.DequantConfig,
+        a: std.mem.Allocator,
+        io: Io,
+        filename: []const u8,
+    ) !BenchRes {
+        switch (self) {
+            .kernel => |info| {
+                var arena: std.heap.ArenaAllocator = .init(a);
+                defer arena.deinit();
+                const inputs = try loadKernelInputs(arena.allocator(), io, filename);
+                return try kernelBenchmark(io, inputs, config, info.out);
+            },
+            .regular => return try benchmark(a, io, filename, config),
+            .jobs => {
+                var reg: st.Registry = try .fromPath(a, io, filename);
+                defer reg.deinit();
+                const jobs = try getAllNVFP4Jobs(a, &reg);
+                defer freeJobs(a, jobs);
+                return try benchmarkJobs(io, jobs, config);
+            },
+            .jobs_seq => {
+                var reg: st.Registry = try .fromPath(a, io, filename);
+                defer reg.deinit();
+                const jobs = try getAllNVFP4Jobs(a, &reg);
+                defer freeJobs(a, jobs);
+                return try benchmarkJobsSequentially(io, jobs, config);
+            },
+        }
+    }
+};
+
 pub fn main() !void {
     const a = std.heap.c_allocator;
     var threaded: Io.Threaded = .init(a, .{});
     defer threaded.deinit();
     const io = threaded.io();
-
     const filename = "nvfp4/model.safetensors";
 
-    var reg: st.Registry = try .fromPath(a, io, filename);
-    defer reg.deinit();
-    const jobs = try getAllNVFP4Jobs(a, &reg);
-    defer freeJobs(a, jobs);
+    const small_out = try a.alloc(f32, 16 * 1024 / @sizeOf(f32));
+    defer a.free(small_out);
 
-    const warmer_count = 4;
-    var seq: BenchRes = undefined;
-    var simd: BenchRes = undefined;
-    var seq_job: BenchRes = undefined;
-    var simd_job: BenchRes = undefined;
-    var seq_job_seq: BenchRes = undefined;
-    var simd_job_seq: BenchRes = undefined;
+    const big_out = try a.alloc(f32, 64 * 1024 * 1024 / @sizeOf(f32));
+    defer a.free(big_out);
 
-    for (0..warmer_count) |_| {
-        seq = try benchmark(a, io, filename, .{ .ordering = .sequential });
-        simd = try benchmark(a, io, filename, .{ .ordering = .simd });
-        seq_job = try benchmarkJobs(io, jobs, .{ .ordering = .sequential });
-        simd_job = try benchmarkJobs(io, jobs, .{ .ordering = .simd });
-        seq_job_seq = try benchmarkJobsSequentially(io, jobs, .{ .ordering = .sequential });
-        simd_job_seq = try benchmarkJobsSequentially(io, jobs, .{ .ordering = .simd });
+    const benchmarks = [_]Benchmark{
+        .jobs,
+        .jobs_seq,
+        .{ .kernel = .{ .out = big_out, .is_big = true } },
+        .{ .kernel = .{ .out = small_out, .is_big = false } },
+        .regular,
+    };
+    const ords = [_]nvfp4.DequantAlgo{ .sequential, .simd };
+    const algs = [_]nvfp4.e2m1Alg{ .bits, .look_up_table, .tbl };
+
+    const warmup = 3;
+
+    for (0..warmup) |_| {
+        for (benchmarks) |b| {
+            for (ords) |ord| {
+                for (algs) |alg| {
+                    _ = try b.run(.{ .ordering = ord, .e2m1 = alg }, a, io, filename);
+                }
+            }
+        }
     }
-    print("Sequential benchmark: {f}\n", .{seq});
-    print("SIMD benchmark: {f}\n", .{simd});
-    print(
-        "SIMD benchmark / Sequential benchmark: {d:.[1]}%\n",
-        .{ simd.ratio(seq), 2 },
-    );
-    print("\n", .{});
 
-    print("Sequential JOB benchmark: {f}\n", .{seq_job});
-    print("SIMD JOB benchmark: {f}\n", .{simd_job});
-    print(
-        "SIMD JOB benchmark / Sequential JOB benchmark: {d:.[1]}%\n",
-        .{ simd_job.ratio(seq_job), 2 },
-    );
-    print("\n", .{});
+    var min_b: Benchmark = undefined;
+    var min_config: nvfp4.DequantConfig = undefined;
+    var min_res: BenchRes = undefined;
 
-    print("Sequential JOB SEQ benchmark: {f}\n", .{seq_job_seq});
-    print("SIMD JOB SEQ benchmark: {f}\n", .{simd_job_seq});
-    print(
-        "SIMD JOB SEQ benchmark / Sequential JOB SEQ benchmark: {d:.[1]}%\n",
-        .{ simd_job_seq.ratio(seq_job_seq), 2 },
-    );
-    print("\n", .{});
-    print(
-        "SIMD JOB benchmark / Sequential benchmark: {d:.[1]}%\n",
-        .{ simd_job.ratio(seq), 2 },
-    );
-    print("\n", .{});
+    var first = true;
+    for (benchmarks) |b| {
+        for (ords) |ord| {
+            for (algs) |alg| {
+                const config: nvfp4.DequantConfig = .{ .ordering = ord, .e2m1 = alg };
+                print("Config = {}\n", .{config});
+                const res = try runBenchmark(b, config, a, io, filename);
+                if (first or res.duration.toMilliseconds() < min_res.duration.toMilliseconds()) {
+                    min_b = b;
+                    min_config = config;
+                    min_res = res;
+                }
+                print("\n", .{});
+                if (first) first = false;
+            }
+        }
+    }
 
-    var arena: std.heap.ArenaAllocator = .init(a);
-    defer arena.deinit();
-    const inputs = try loadKernelInputs(arena.allocator(), io, filename);
-
-    try runKernelBenchmarks(a, io, inputs, "16KiB", 16 * 1024);
-    print("\n", .{});
-    try runKernelBenchmarks(a, io, inputs, "64MiB", 64 * 1024 * 1024);
+    print("----------------------------------\n", .{});
+    print("Best results:\n", .{});
+    print("Config = {}\n", .{min_config});
+    print("{s} benchmark: {f}\n", .{ min_b.name(), min_res });
 }
