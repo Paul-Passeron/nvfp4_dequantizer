@@ -492,9 +492,10 @@ pub const Tensor = struct {
         registry: *const st.Registry,
         base: []const u8,
         comptime end: []const u8,
-    ) error{MissingTensorInfo}!*const st.Tensor {
+    ) error{ MissingTensorInfo, OutOfMemory }!*const st.Tensor {
         const weight_packed_name =
-            std.fmt.allocPrint(a, "{s}." ++ end, .{base}) catch unreachable;
+            try a.print("{s}." ++ end, .{base});
+        defer a.free(weight_packed_name);
         const weight_packed = registry.get(weight_packed_name) orelse
             return error.MissingTensorInfo;
         return weight_packed;
@@ -504,7 +505,7 @@ pub const Tensor = struct {
     pub fn fromRegistry(
         registry: *const st.Registry,
         base: []const u8,
-    ) error{MissingTensorInfo}!?Tensor {
+    ) error{ MissingTensorInfo, OutOfMemory }!?Tensor {
         var scratch_b: [512]u8 = undefined;
         var scratch: std.heap.FixedBufferAllocator = .init(&scratch_b);
         const a = scratch.allocator();
@@ -697,16 +698,18 @@ pub const TensorReader = struct {
         buffers: Buffers,
         config: DequantConfig,
     ) !TensorReader {
-        const packed_reader: st.TensorReader = try .init(
+        var packed_reader: st.TensorReader = try .init(
             io,
             tensor.weight_packed,
             .{ .file = buffers.packed_bytes },
         );
-        const scale_reader: st.TensorReader = try .init(
+        errdefer packed_reader.deinit();
+        var scale_reader: st.TensorReader = try .init(
             io,
             tensor.weight_scale,
             .{ .file = buffers.scales },
         );
+        errdefer scale_reader.deinit();
         const inv_global = 1.0 / try tensor.weight_global_scale.readScalar(io, f32);
 
         const remaining_blocks = tensor.weight_scale.byte_len;
