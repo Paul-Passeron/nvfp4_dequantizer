@@ -5,7 +5,11 @@ const nvfp4 = @import("nvfp4");
 pub const Destination = union(enum) {
     /// length must be `tensor.byteLen()`
     mem: []u8,
-    file: struct { file: *const std.Io.File, offset: u64 },
+    file: struct {
+        buffer: []u8,
+        file: *const std.Io.File,
+        offset: u64,
+    },
     discard,
 };
 
@@ -69,8 +73,7 @@ pub const Job = struct {
                 _ = try reader.streamRemaining(&w.writer);
             },
             .file => |f| {
-                var buffer: [32 * 1024]u8 = undefined;
-                var w = f.file.writer(io, &buffer);
+                var w = f.file.writer(io, f.buffer);
                 w.pos = f.offset;
                 _ = try reader.streamRemaining(&w.interface);
                 try w.flush();
