@@ -5,11 +5,17 @@ pub const DataType = enum {
     U16,
     U32,
     U64,
+    I8,
+    I16,
+    I32,
+    I64,
     F16,
     F32,
     F64,
     BF16,
     F8_E4M3,
+    F8_E5M2,
+    BOOL,
 
     pub fn str(self: DataType) []const u8 {
         return switch (self) {
@@ -17,11 +23,17 @@ pub const DataType = enum {
             .U16 => "U16",
             .U32 => "U32",
             .U64 => "U64",
+            .I8 => "I8",
+            .I16 => "I16",
+            .I32 => "I32",
+            .I64 => "I64",
             .F16 => "F16",
             .F32 => "F32",
             .F64 => "F64",
             .BF16 => "BF16",
             .F8_E4M3 => "F8_E4M3",
+            .F8_E5M2 => "F8_E5M2",
+            .BOOL => "BOOL",
         };
     }
 };
@@ -35,6 +47,11 @@ fn expectedDataType(comptime T: type) ?DataType {
         u16 => return .U16,
         u32 => return .U32,
         u64 => return .U64,
+        i8 => return .I8,
+        i16 => return .I16,
+        i32 => return .I32,
+        i64 => return .I64,
+        bool => return .BOOL,
         else => return null,
     }
 }
@@ -299,11 +316,10 @@ pub const Registry = struct {
         path: []const u8,
     ) !Registry {
         var this: Registry = .init(allocator);
-        if (std.mem.endsWith(u8, path, ".safetensors")) {
-            try this.parseFile(io, path);
-        } else {
-            @panic("Only .safetensors files are handled");
+        if (!std.mem.endsWith(u8, path, ".safetensors")) {
+            return error.UnsupportedFileKind;
         }
+        try this.parseFile(io, path);
         return this;
     }
 
