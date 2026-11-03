@@ -140,11 +140,10 @@ fn checkDequantRangeInput(
     if (out.len != scales.len * 16) return err;
 }
 
-fn split_bytes_into_nibbles(
+fn splitBytesIntoNibbles(
     comptime n: comptime_int,
-    comptime T: type,
     bytes: @Vector(n, u8),
-) @Vector(n * 2, T) {
+) @Vector(n * 2, u8) {
     const mask: @Vector(n, u8) = @splat(0xF);
     const lo = bytes & mask;
     const hi = (bytes >> @splat(4)) & mask;
@@ -233,7 +232,7 @@ fn e2m1Range(
             const V = @Vector(n * 2, u8);
             const W = @Vector(n * 2, u32);
             const bytes: @Vector(n, u8) = packed_bytes.*;
-            const v: V = split_bytes_into_nibbles(n, u8, bytes);
+            const v: V = splitBytesIntoNibbles(n, bytes);
             const s: V = (v >> @splat(3)) & @as(V, @splat(1));
             const e = (v >> @splat(1)) & @as(V, @splat(3));
             const m = v & @as(V, @splat(1));
@@ -259,7 +258,7 @@ fn e2m1Range(
         .tbl => {
             comptime std.debug.assert(n * 2 % 16 == 0);
             const bytes: @Vector(n, u8) = packed_bytes.*;
-            const nibbles: [n * 2]u8 = split_bytes_into_nibbles(n, u8, bytes);
+            const nibbles: [n * 2]u8 = splitBytesIntoNibbles(n, bytes);
             var res: [n * 2]u32 = undefined;
             inline for (0..n * 2 / 16) |k| {
                 const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
