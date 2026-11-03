@@ -106,9 +106,10 @@ pub const Job = struct {
     }
 };
 
-pub fn runAllJobs(io: std.Io, config: nvfp4.DequantConfig, jobs: []Job) std.Io.Cancelable!void {
+pub fn runAllJobs(io: std.Io, config: nvfp4.DequantConfig, jobs: []Job) !void {
     var group: std.Io.Group = .init;
     for (jobs) |*job|
         group.async(io, Job.run, .{ job, io, config });
     try group.await(io);
+    for (jobs) |job| if (job.err) |err| return err;
 }
