@@ -160,10 +160,10 @@ pub const TensorReader = struct {
         const r: *TensorReader = @alignCast(
             @fieldParentPtr("interface", io_reader),
         );
-        return r.stream_impl(io_writer, limit);
+        return r.streamImpl(io_writer, limit);
     }
 
-    fn stream_impl(
+    fn streamImpl(
         self: *TensorReader,
         io_writer: *std.Io.Writer,
         limit: std.Io.Limit,
@@ -176,11 +176,11 @@ pub const TensorReader = struct {
             .file_reader
             .interface
             .stream(io_writer, actual_limit);
-        self.advance_by(read);
+        self.advanceBy(read);
         return read;
     }
 
-    fn advance_by(self: *TensorReader, byte_count: usize) void {
+    fn advanceBy(self: *TensorReader, byte_count: usize) void {
         if (byte_count > self.remaining) {
             // TODO: This shouldn't be allowed ?
             self.remaining = 0;
@@ -192,7 +192,7 @@ pub const TensorReader = struct {
     pub fn take(self: *TensorReader, n: usize) ![]const u8 {
         if (n > self.remaining) return error.EndOfStream;
         const bytes = try self.file_reader.interface.take(n);
-        self.advance_by(n);
+        self.advanceBy(n);
         return bytes;
     }
 
@@ -203,10 +203,10 @@ pub const TensorReader = struct {
         const r: *TensorReader = @alignCast(
             @fieldParentPtr("interface", io_reader),
         );
-        return r.discard_impl(limit);
+        return r.discardImpl(limit);
     }
 
-    fn discard_impl(
+    fn discardImpl(
         self: *TensorReader,
         limit: std.Io.Limit,
     ) error{ EndOfStream, ReadFailed }!usize {
@@ -218,7 +218,7 @@ pub const TensorReader = struct {
             .file_reader
             .interface
             .discard(actual_limit);
-        self.advance_by(discarded);
+        self.advanceBy(discarded);
         return discarded;
     }
 

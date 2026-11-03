@@ -38,22 +38,7 @@ fn E2M1_from_parts(
     return bits;
 }
 
-fn decodeE2M1_impl(x: u4) f32 {
-    // const v: u32 = x;
-    //     const s = (v >> 3) & 1;
-    //     const e1 = (v >> 2) & 1;
-    //     const e0 = (v >> 1) & 1;
-    //     const m = v & 1;
-    //
-    //     const t = ~e1 & (e0 | m) & 1;
-    //
-    //     var tt = t | (t << 1);
-    //     tt |= tt << 2;
-    //     tt |= tt << 4;
-    //
-    //     const exp = (e1 << 7) | (tt & 0b0111_1110) | e0;
-    //     const bits = (s << 31) | (exp << 23) | ((m & (e0 | e1)) << 22);
-    //     return @bitCast(bits);
+fn decodeE2M1Impl(x: u4) f32 {
     const sign: u16 = @as(u16, x >> 3) << 15;
     const e: u16 = (x >> 1) & 0b11;
     const m: u16 = x & 0b1;
@@ -61,25 +46,26 @@ fn decodeE2M1_impl(x: u4) f32 {
     return @as(f32, @as(f16, @bitCast(bits)));
 }
 
-fn create_decodeE2M1_table() [16]f32 {
+fn createDecodeE2M1Table() [16]f32 {
     var table: [16]f32 = undefined;
     for (&table, 0..) |*v, i| {
-        v.* = decodeE2M1_impl(@as(u4, i));
+        v.* = decodeE2M1Impl(@as(u4, i));
     }
     return table;
 }
 
-const decodeE2M1_table: [16]f32 = create_decodeE2M1_table();
+const e2m1_table: [16]f32 = createDecodeE2M1Table();
 
 pub inline fn decodeE2M1(nibble: u4) f32 {
-    return decodeE2M1_table[nibble];
+    return e2m1_table[nibble];
 }
 
 test "decodeE2M1 covers all 16 values" {
     const expected = [16]f32{ 0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6 };
     for (expected, 0..) |e, i| try std.testing.expectEqual(e, decodeE2M1(@intCast(i)));
 }
-fn E4M3_from_parts(sign: u16, e: u16, m: u16) u16 {
+
+fn E4M3FromParts(sign: u16, e: u16, m: u16) u16 {
     var bits: u16 = sign;
     if (e == 0b1111 and m == 0b111) {
         bits |= 0x7E00; // NaN
@@ -99,7 +85,7 @@ pub fn decodeE4M3(byte: u8) f32 {
     const sign: u16 = @as(u16, byte >> 7) << 15;
     const e: u16 = @as(u16, byte >> 3) & 0b1111;
     const m: u16 = byte & 0b111;
-    const bits = E4M3_from_parts(sign, e, m);
+    const bits = E4M3FromParts(sign, e, m);
     return @as(f32, @as(f16, @bitCast(bits)));
 }
 
@@ -156,7 +142,7 @@ pub const e2m1Alg = enum { look_up_table, bits, tbl };
 
 fn e2m1ByteTable(comptime shift: u5) @Vector(16, u8) {
     var t: [16]u8 = undefined;
-    for (&t, decodeE2M1_table) |*x, f| {
+    for (&t, e2m1_table) |*x, f| {
         const bits: u32 = @bitCast(f);
         std.debug.assert(bits & 0xFFFF == 0);
         x.* = @truncate(bits >> shift);
@@ -242,8 +228,8 @@ fn e2m1Range(
             inline for (packed_bytes, 0..) |b, i| {
                 const lo: u4 = @intCast(b & 0b1111);
                 const hi: u4 = @intCast(b >> 4);
-                res[2 * i + 0] = decodeE2M1_table[lo];
-                res[2 * i + 1] = decodeE2M1_table[hi];
+                res[2 * i + 0] = e2m1_table[lo];
+                res[2 * i + 1] = e2m1_table[hi];
             }
             return res;
         },
@@ -406,7 +392,7 @@ const lengths_size: comptime_int = blk: {
     break :blk @intCast(pot);
 };
 
-fn compute_vec_lengths() [lengths_size]u32 {
+fn computeVecLengths() [lengths_size]u32 {
     var res: [lengths_size]u32 = undefined;
     for (0..lengths_size) |i| {
         const p: i32 = lengths_size - i - 1;
@@ -415,7 +401,7 @@ fn compute_vec_lengths() [lengths_size]u32 {
     return res;
 }
 
-const vec_lengths: [lengths_size]u32 = compute_vec_lengths();
+const vec_lengths: [lengths_size]u32 = computeVecLengths();
 
 noinline fn dequantRangeSimd(
     algo: e2m1Alg,
@@ -482,7 +468,7 @@ pub const Tensor = struct {
     weight_scale: *const st.Tensor,
     weight_global_scale: *const st.Tensor,
 
-    fn get_tensor_from_registry(
+    fn getTensorFromRegistry(
         a: std.mem.Allocator,
         registry: *const st.Registry,
         base: []const u8,
@@ -506,7 +492,7 @@ pub const Tensor = struct {
         const a = scratch.allocator();
 
         const weight_packed =
-            get_tensor_from_registry(
+            getTensorFromRegistry(
                 a,
                 registry,
                 base,
@@ -515,11 +501,11 @@ pub const Tensor = struct {
 
         scratch.reset();
         const weight_scale =
-            try get_tensor_from_registry(a, registry, base, "weight_scale");
+            try getTensorFromRegistry(a, registry, base, "weight_scale");
 
         scratch.reset();
         const weight_global_scale =
-            try get_tensor_from_registry(a, registry, base, "weight_global_scale");
+            try getTensorFromRegistry(a, registry, base, "weight_global_scale");
 
         return .{
             .weight_packed = weight_packed,

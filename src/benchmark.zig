@@ -10,7 +10,7 @@ const BenchRes = struct {
     duration: Io.Duration,
     bytes_read: usize,
 
-    fn bytes_per_ns(self: BenchRes) f32 {
+    fn bytesPerNanoseconds(self: BenchRes) f32 {
         const bytes: f32 = @floatFromInt(self.bytes_read);
         const ns: f32 = @floatFromInt(self.duration.toNanoseconds());
         return bytes / ns;
@@ -23,7 +23,7 @@ const BenchRes = struct {
         try writer.print("Read {} bytes in {f}. ({} bytes/ns)", .{
             self.bytes_read,
             self.duration,
-            self.bytes_per_ns(),
+            self.bytesPerNanoseconds(),
         });
     }
 
