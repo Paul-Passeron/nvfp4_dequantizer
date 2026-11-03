@@ -300,6 +300,7 @@ pub const Registry = struct {
     // as the registry does.
     arena: std.heap.ArenaAllocator,
     tensors: Tensors,
+    metadata: ?std.json.Value = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -373,10 +374,11 @@ pub const Registry = struct {
         var it = root.object.iterator();
         const allocated_path = try self.arena.allocator().dupe(u8, path);
         while (it.next()) |entry| {
-            // TODO: What to do with metadata ?
-            // - Keep it as a raw JSON object ?
-            // - Do something else ?
-            if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) continue;
+            if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) {
+                if (entry.value_ptr.* != .object) return error.InvalidMetadata;
+                self.metadata = .{ .object = try entry.value_ptr.object.clone(a) };
+                continue;
+            }
 
             const RawTensorInfo = struct {
                 dtype: DataType,
