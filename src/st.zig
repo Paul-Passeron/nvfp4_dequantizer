@@ -277,8 +277,8 @@ pub const Registry = struct {
         var this: Registry = .init(allocator);
         if (std.mem.endsWith(u8, path, ".safetensors")) {
             try this.parseFile(io, path);
-        } else if (std.mem.endsWith(u8, path, ".safetensors.index.json")) {
-            @panic("TODO: handle index files");
+        } else {
+            @panic("Only .safetensors files are handled");
         }
         return this;
     }
