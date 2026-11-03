@@ -7,29 +7,18 @@ const usage =
     \\Usage: nvfp4 <in .safetensor> <out .safetensor>
 ;
 
-const AllErrors = error{
-    InvalidArgCount,
-    OutOfMemory,
-    InputFileNotFound,
-    IoProblem,
-    UnknownIssue,
-};
-
 const Options = struct {
-    in: []u8,
-    out: []u8,
+    in: []const u8,
+    out: []const u8,
 
-    fn fromArgs(
-        allocator: std.mem.Allocator,
-        args: []const [:0]const u8,
-    ) error{ InvalidArgCount, OutOfMemory }!Options {
+    fn fromArgs(args: []const [:0]const u8) ?Options {
         if (args.len != 3) {
-            return error.InvalidArgCount;
+            return null;
         }
-        var opts: Options = undefined;
-        opts.in = try allocator.dupe(u8, args[1]);
-        opts.out = try allocator.dupe(u8, args[2]);
-        return opts;
+        return .{
+            .in = args[1],
+            .out = args[2],
+        };
     }
 
     fn deinit(self: *Options, allocator: std.mem.Allocator) void {
@@ -45,26 +34,6 @@ fn checkFile(io: std.Io, path: []const u8) error{FileNotFound}!void {
 
 pub inline fn errorSet(comptime Err: type, err: anytype) bool {
     return @hasField(std.meta.FieldEnum(Err), @errorName(err));
-}
-
-fn sanitizeError(e: anyerror, err: *std.Io.Writer) AllErrors {
-    return switch (e) {
-        error.InvalidArgCount => error.InvalidArgCount,
-        error.OutOfMemory => error.OutOfMemory,
-        error.InputFileNotFound => error.InputFileNotFound,
-        error.IoProblem => error.IoProblem,
-        error.UnknownIssue => error.UnknownIssue,
-        error.FileNotFound => error.InputFileNotFound,
-        error.WriteFailed => blk: {
-            err.print("error: Write failed\n", .{}) catch return error.UnknownIssue;
-
-            break :blk error.IoProblem;
-        },
-        else => blk: {
-            err.print("error: {}", .{e}) catch return error.UnknownIssue;
-            break :blk error.UnknownIssue;
-        },
-    };
 }
 
 fn writeJSONHeader(
@@ -114,7 +83,7 @@ fn doWork(
     out: *std.Io.Writer,
     args: []const [:0]const u8,
 ) !void {
-    var opts = try Options.fromArgs(allocator, args);
+    var opts = Options.fromArgs(args) orelse return error.CouldntParseArgs;
     defer opts.deinit(allocator);
 
     try checkFile(io, opts.in);
@@ -228,8 +197,7 @@ pub fn main(init: std.process.Init) !void {
     var err_writer = std.Io.File.stderr().writer(io, &err_buf);
     const err = &err_writer.interface;
 
-    doWork(allocator, io, out, args) catch |e|
-        failError(err, sanitizeError(e, err));
+    doWork(allocator, io, out, args) catch |e| fail(err, "{}", .{e});
 
     try out.flush();
 }
@@ -238,24 +206,4 @@ fn fail(err: *std.Io.Writer, comptime fmt: []const u8, args: anytype) noreturn {
     err.print("error: " ++ fmt ++ "\n" ++ usage, args) catch {};
     err.flush() catch {};
     std.process.exit(2);
-}
-
-fn failError(err: *std.Io.Writer, e: AllErrors) noreturn {
-    switch (e) {
-        error.InvalidArgCount => {
-            fail(err, "Invalid number of arguments, expected 2.", .{});
-        },
-        error.OutOfMemory => {
-            fail(err, "Out of memory.", .{});
-        },
-        error.InputFileNotFound => {
-            fail(err, "Input file not found", .{});
-        },
-        error.IoProblem => {
-            fail(err, "Io problem", .{});
-        },
-        error.UnknownIssue => {
-            fail(err, "Unknown issue", .{});
-        },
-    }
 }
