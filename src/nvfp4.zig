@@ -406,8 +406,12 @@ inline fn dequantBlocks(
 }
 
 const lengths_size: comptime_int = blk: {
-    const n = std.simd.suggestVectorLength(f32) orelse 16;
-    const pot = std.math.ceilPowerOfTwo(u32, n) catch unreachable;
+    var n = std.simd.suggestVectorLength(f32) orelse 16;
+    var pot = 0;
+    while (n > 0) {
+        pot += 1;
+        n /= 2;
+    }
     break :blk @intCast(pot);
 };
 
