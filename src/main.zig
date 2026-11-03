@@ -172,7 +172,12 @@ fn doWork(
     _ = try fw.write(std.mem.asBytes(&zero));
     try writeJSONHeader(entries.items, offsets.items, fw);
 
-    const header_bytes: u64 = f_writer.logicalPos() - 8;
+    const json_bytes: u64 = f_writer.logicalPos() - 8;
+    const padding: usize =
+        @intCast(std.mem.alignForward(u64, json_bytes, 8) - json_bytes);
+    try fw.splatByteAll(' ', padding);
+
+    const header_bytes: u64 = json_bytes + padding;
     try f_writer.seekTo(0);
     _ = try fw.writeInt(u64, header_bytes, .little);
     try fw.flush();
