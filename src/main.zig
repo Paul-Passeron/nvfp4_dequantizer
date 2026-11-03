@@ -39,10 +39,7 @@ const Options = struct {
 };
 
 fn checkFile(io: std.Io, path: []const u8) error{FileNotFound}!void {
-    (if (std.mem.startsWith(u8, path, "/"))
-        std.Io.Dir.accessAbsolute(io, path, .{})
-    else
-        std.Io.Dir.access(std.Io.Dir.cwd(), io, path, .{})) catch
+    std.Io.Dir.cwd().access(io, path, .{}) catch
         return error.FileNotFound;
 }
 
@@ -160,6 +157,17 @@ fn doWork(
 
     const end_time = clock.now(io);
     const duration = start_time.durationTo(end_time);
+
+    const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
+    defer out_file.close(io);
+
+    var f_buffer: [32 * 1024]u8 = undefined;
+    var f_writer = out_file.writer(io, &f_buffer);
+    var fw = &f_writer.interface;
+
+    // Placeholder header size
+    const zero: u64 = 0;
+    _ = try fw.write(std.mem.asBytes(&zero));
 
     try out.print("in = `{s}`, out = `{s}`\n", .{ opts.in, opts.out });
     try out.print("registry count = {}\n", .{r.count()});
