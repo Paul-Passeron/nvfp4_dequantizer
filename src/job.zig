@@ -3,7 +3,7 @@ const st = @import("st");
 const nvfp4 = @import("nvfp4");
 
 pub const Destination = union(enum) {
-    /// length must be `tensor.dequantByteLen()`
+    /// length must be `tensor.byteLen()`
     mem: []u8,
     discard,
 };
@@ -12,7 +12,7 @@ pub const Entry = union(enum) {
     nvfp4: nvfp4.Tensor,
     regular: *const st.Tensor,
 
-    pub fn byteLen(self: *Entry) usize {
+    pub fn byteLen(self: *const Entry) usize {
         return switch (self.*) {
             .nvfp4 => |t| t.dequantByteLen(),
             .regular => |t| t.byte_len,
@@ -85,8 +85,7 @@ pub const Job = struct {
 
 pub fn readAll(io: std.Io, config: nvfp4.DequantConfig, jobs: []Job) std.Io.Cancelable!void {
     var group: std.Io.Group = .init;
-    for (jobs) |*job| {
+    for (jobs) |*job|
         group.async(io, Job.run, .{ job, io, config });
-    }
     try group.await(io);
 }
