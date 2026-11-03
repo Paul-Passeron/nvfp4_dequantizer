@@ -4,7 +4,7 @@ const nvfp4 = @import("nvfp4");
 const job = @import("job");
 
 const usage =
-    \\Usage: nvfp4 <in .safetensor> <out .safetensor>
+    \\usage: nvfp4 <in .safetensor> <out .safetensor>
 ;
 
 const Options = struct {
@@ -21,15 +21,6 @@ const Options = struct {
         };
     }
 };
-
-fn checkFile(io: std.Io, path: []const u8) error{FileNotFound}!void {
-    std.Io.Dir.cwd().access(io, path, .{}) catch
-        return error.FileNotFound;
-}
-
-pub inline fn errorSet(comptime Err: type, err: anytype) bool {
-    return @hasField(std.meta.FieldEnum(Err), @errorName(err));
-}
 
 const Layout = struct {
     entries: []job.Entry,
@@ -49,15 +40,15 @@ const Layout = struct {
         const nvfp4s = try nvfp4.getAllNVFP4Tensors(allocator, r);
         defer allocator.free(nvfp4s);
 
-        var bases = try allocator.alloc([]const u8, nvfp4s.len);
-        defer allocator.free(bases);
+        var tensors: std.AutoHashMap(*const st.Tensor, void) = .init(allocator);
+        defer tensors.deinit();
 
         var total_byte_len: usize = 0;
 
-        for (nvfp4s, 0..) |t, i| {
-            const name = t.weight_packed.name;
-            const base = std.mem.cutSuffix(u8, name, ".weight_packed").?;
-            bases[i] = base;
+        for (nvfp4s) |t| {
+            try tensors.put(t.weight_global_scale, {});
+            try tensors.put(t.weight_packed, {});
+            try tensors.put(t.weight_scale, {});
             try entries.append(allocator, .{ .nvfp4 = t });
             try offsets.append(allocator, total_byte_len);
             total_byte_len += t.dequantByteLen();
@@ -66,18 +57,7 @@ const Layout = struct {
         var it = r.iterator();
 
         while (it.next()) |t| {
-            var is_nvfp4 = false;
-            for (bases) |b| {
-                const name = t.value_ptr.name;
-                if (name.len > b.len and
-                    std.mem.startsWith(u8, name, b) and
-                    name[b.len] == '.')
-                {
-                    is_nvfp4 = true;
-                    break;
-                }
-            }
-            if (is_nvfp4) continue;
+            if (tensors.contains(t.value_ptr)) continue;
             try entries.append(allocator, .{ .regular = t.value_ptr });
             try offsets.append(allocator, total_byte_len);
             total_byte_len += t.value_ptr.byte_len;
@@ -133,72 +113,54 @@ const Layout = struct {
         }
         try w.print("}}", .{});
     }
-};
 
-fn doWork(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    out: *std.Io.Writer,
-    args: []const [:0]const u8,
-) !void {
-    const opts = Options.fromArgs(args) orelse return error.CouldntParseArgs;
+    fn writeHeader(self: *const Layout, f_writer: *std.Io.File.Writer) !u64 {
+        var fw = &f_writer.interface;
+        // Placeholder header size
+        _ = try fw.writeInt(u64, 0, .little);
+        try self.writeJSONHeader(fw);
 
-    try checkFile(io, opts.in);
+        const json_bytes: u64 = f_writer.logicalPos() - 8;
+        const padding: usize =
+            @intCast(std.mem.alignForward(u64, json_bytes, 8) - json_bytes);
+        try fw.splatByteAll(' ', padding);
 
-    var r: st.Registry = try .fromPath(allocator, io, opts.in);
-    defer r.deinit();
-
-    var layout = try Layout.fromRegistry(allocator, &r);
-    defer layout.deinit(allocator);
-
-    // TODO: maybe write to file directly, as it will save the cost of copying
-    // the buffer to the file
-
-    const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
-    defer out_file.close(io);
-
-    var f_buffer: [32 * 1024]u8 = undefined;
-    var f_writer = out_file.writer(io, &f_buffer);
-    var fw = &f_writer.interface;
-
-    // Placeholder header size
-    const zero: u64 = 0;
-    _ = try fw.write(std.mem.asBytes(&zero));
-    try layout.writeJSONHeader(fw);
-
-    const json_bytes: u64 = f_writer.logicalPos() - 8;
-    const padding: usize =
-        @intCast(std.mem.alignForward(u64, json_bytes, 8) - json_bytes);
-    try fw.splatByteAll(' ', padding);
-
-    const header_bytes: u64 = json_bytes + padding;
-    try f_writer.seekTo(0);
-    _ = try fw.writeInt(u64, header_bytes, .little);
-    try fw.flush();
-
-    var jobs: []job.Job = try allocator.alloc(job.Job, layout.entries.len);
-    defer allocator.free(jobs);
-
-    for (layout.entries, 0..) |e, i| {
-        jobs[i] = .{ .tensor = e, .dest = .{ .file = .{
-            .file = &out_file,
-            .offset = layout.offsets[i] + header_bytes + 8,
-        } } };
+        const header_bytes: u64 = json_bytes + padding;
+        try f_writer.seekTo(0);
+        _ = try fw.writeInt(u64, header_bytes, .little);
+        return header_bytes;
     }
 
-    const clock = std.Io.Clock.awake;
-    const start_time = clock.now(io);
+    fn getJobs(
+        self: *Layout,
+        allocator: std.mem.Allocator,
+        out_file: *const std.Io.File,
+        global_offset: u64,
+    ) ![]job.Job {
+        var jobs: []job.Job = try allocator.alloc(job.Job, self.entries.len);
 
-    try job.runAllJobs(io, .{ .ordering = .simd }, jobs);
+        for (self.entries, 0..) |e, i| {
+            jobs[i] = .{ .tensor = e, .dest = .{ .file = .{
+                .buffer = try allocator.alloc(u8, 4 * 1024 * 1024),
+                .file = out_file,
+                .offset = self.offsets[i] + global_offset,
+            } } };
+        }
 
-    const end_time = clock.now(io);
-    const duration = start_time.durationTo(end_time);
+        return jobs;
+    }
+};
 
-    try out.print("in = `{s}`, out = `{s}`\n", .{ opts.in, opts.out });
-    try out.print("registry count = {}\n", .{r.count()});
-    try out.print("jobs count = {}\n", .{jobs.len});
-    const total_file_size = 8 + header_bytes + layout.total_byte_len;
-    try out.print("read \t{} bytes\nwrote \t{} bytes\nin {f}.\n", .{ layout.total_byte_len, total_file_size, duration });
+fn deinitJobs(allocator: std.mem.Allocator, jobs: []job.Job) void {
+    for (jobs) |j| {
+        switch (j.dest) {
+            .file => |f| {
+                allocator.free(f.buffer);
+            },
+            else => {},
+        }
+    }
+    allocator.free(jobs);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -208,20 +170,59 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     var out_buf: [4096]u8 = undefined;
-    var out_writer = std.Io.File.stdout().writer(io, &out_buf);
+    var out_writer = std.Io.File.stdout().writerStreaming(io, &out_buf);
     const out = &out_writer.interface;
 
-    var err_buf: [1024]u8 = undefined;
-    var err_writer = std.Io.File.stderr().writer(io, &err_buf);
+    var err_buf: [4096]u8 = undefined;
+    var err_writer = std.Io.File.stderr().writerStreaming(io, &err_buf);
     const err = &err_writer.interface;
 
-    doWork(allocator, io, out, args) catch |e| fail(err, "{}", .{e});
+    const clock = std.Io.Clock.awake;
+    const start_time = clock.now(io);
+
+    const opts = Options.fromArgs(args) orelse return error.CouldntParseArgs;
+
+    var r = st.Registry.fromPath(allocator, io, opts.in) catch |e|
+        fail(err, "could not load safetensors file at `{s}`: {}", .{ opts.in, e });
+    defer r.deinit();
+
+    var layout = try Layout.fromRegistry(allocator, &r);
+    defer layout.deinit(allocator);
+
+    const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
+    defer out_file.close(io);
+
+    var f_buffer: [32 * 1024]u8 = undefined;
+    var f_writer = out_file.writer(io, &f_buffer);
+
+    const header_bytes = try layout.writeHeader(&f_writer);
+    const total_file_size = 8 + header_bytes + layout.total_byte_len;
+    try out_file.setLength(io, total_file_size);
+
+    const jobs = try layout.getJobs(allocator, &out_file, header_bytes + 8);
+    defer deinitJobs(allocator, jobs);
+
+    try job.runAllJobs(io, .{ .ordering = .simd }, jobs);
+
+    try f_writer.flush();
+
+    const end_time = clock.now(io);
+    const duration = start_time.durationTo(end_time);
+
+    try out.print("in = `{s}`, out = `{s}`\n", .{ opts.in, opts.out });
+    try out.print("registry count = {}\n", .{r.count()});
+    try out.print("jobs count = {}\n", .{jobs.len});
+    try out.print("read \t{} bytes\nwrote \t{} bytes\nin {f}.\n", .{
+        layout.total_byte_len,
+        total_file_size,
+        duration,
+    });
 
     try out.flush();
 }
 
 fn fail(err: *std.Io.Writer, comptime fmt: []const u8, args: anytype) noreturn {
-    err.print("error: " ++ fmt ++ "\n" ++ usage, args) catch {};
+    err.print("error: " ++ fmt ++ "\n" ++ usage ++ "\n", args) catch {};
     err.flush() catch {};
     std.process.exit(2);
 }
