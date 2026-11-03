@@ -98,7 +98,7 @@ fn writeJSONHeader(
         }
         try w.print("]}}", .{});
     }
-    try w.print("}} ", .{});
+    try w.print("}}", .{});
 }
 
 fn doWork(
