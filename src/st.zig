@@ -371,6 +371,7 @@ pub const Registry = struct {
             .{ .allocate = .alloc_always },
         );
         var it = root.object.iterator();
+        const allocated_path = try self.arena.allocator().dupe(u8, path);
         while (it.next()) |entry| {
             // TODO: What to do with metadata ?
             // - Keep it as a raw JSON object ?
@@ -394,7 +395,7 @@ pub const Registry = struct {
 
             const t: Tensor = .{
                 .name = entry.key_ptr.*,
-                .path = try self.arena.allocator().dupe(u8, path),
+                .path = allocated_path,
                 .shape = raw_info.shape,
                 .dtype = raw_info.dtype,
                 .offset = raw_info.data_offsets[0] + 8 + n,
