@@ -55,7 +55,11 @@ fn sanitizeError(e: anyerror, err: *std.Io.Writer) AllErrors {
         error.IoProblem => error.IoProblem,
         error.UnknownIssue => error.UnknownIssue,
         error.FileNotFound => error.InputFileNotFound,
-        error.WriteFailed => error.IoProblem,
+        error.WriteFailed => blk: {
+            err.print("error: Write failed\n", .{}) catch return error.UnknownIssue;
+
+            break :blk error.IoProblem;
+        },
         else => blk: {
             err.print("error: {}", .{e}) catch return error.UnknownIssue;
             break :blk error.UnknownIssue;
@@ -155,9 +159,6 @@ fn doWork(
 
     try job.runAllJobs(io, .{ .ordering = .simd }, jobs);
 
-    const end_time = clock.now(io);
-    const duration = start_time.durationTo(end_time);
-
     const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
     defer out_file.close(io);
 
@@ -169,10 +170,53 @@ fn doWork(
     const zero: u64 = 0;
     _ = try fw.write(std.mem.asBytes(&zero));
 
+    try fw.print("{{", .{});
+
+    for (entries.items, offsets.items, 0..) |e, offset, i| {
+        if (i > 0) try fw.print(",", .{});
+        try fw.print("\"{s}{s}\":{{", .{ e.name(), switch (e) {
+            .nvfp4 => ".weight",
+            else => "",
+        } });
+        try fw.print("\"dtype\":\"{s}\"", .{e.dtype().str()});
+        try fw.print("\"offsets\":[{}, {}],", .{ offset, offset + e.byteLen() });
+        try fw.print("\"shape\":[", .{});
+        var shape_buffer: [2]u64 = undefined;
+        const shape: []const u64 =
+            switch (e) {
+                .nvfp4 => |t| blk: {
+                    shape_buffer = t.shape();
+                    break :blk &shape_buffer;
+                },
+                .regular => |t| t.shape,
+            };
+        for (shape, 0..) |dim, dim_idx| {
+            if (dim_idx > 0) try fw.print(",", .{});
+            try fw.print("{}", .{dim});
+        }
+        try fw.print("]}}", .{});
+    }
+    try fw.print("}}", .{});
+
+    const header_bytes: u64 = f_writer.pos - 8;
+    try f_writer.seekTo(0);
+    _ = try fw.writeInt(u64, header_bytes, .little);
+    try f_writer.end();
+    var rest: []const u8 = output_buffer;
+    while (rest.len > 0) {
+        const n = @min(rest.len, 1 << 30);
+        try fw.writeAll(rest[0..n]);
+        rest = rest[n..];
+    }
+    try fw.flush();
+
+    const end_time = clock.now(io);
+    const duration = start_time.durationTo(end_time);
+
     try out.print("in = `{s}`, out = `{s}`\n", .{ opts.in, opts.out });
     try out.print("registry count = {}\n", .{r.count()});
     try out.print("jobs count = {}\n", .{jobs.len});
-    try out.print("Read {} MB in {f}.\n", .{ total_byte_len / 1024 / 1024, duration });
+    try out.print("Read {} MB and wrote {} MB in {f}.\n", .{ total_byte_len / 1024 / 1024, f_writer.pos / 1024 / 1024, duration });
 }
 
 pub fn main(init: std.process.Init) !void {

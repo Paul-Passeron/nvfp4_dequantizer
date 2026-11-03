@@ -18,6 +18,20 @@ pub const Entry = union(enum) {
             .regular => |t| t.byte_len,
         };
     }
+
+    pub fn name(self: *const Entry) []const u8 {
+        return switch (self.*) {
+            .nvfp4 => |t| std.mem.cutSuffix(u8, t.weight_packed.name, ".weight_packed").?,
+            .regular => |t| t.name,
+        };
+    }
+
+    pub fn dtype(self: *const Entry) st.DataType {
+        return switch (self.*) {
+            .nvfp4 => .F32,
+            .regular => |t| t.dtype,
+        };
+    }
 };
 
 pub const Job = struct {

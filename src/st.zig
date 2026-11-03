@@ -1,6 +1,30 @@
 const std = @import("std");
 
-pub const DataType = enum { U8, U16, U32, U64, F16, F32, F64, BF16, F8_E4M3 };
+pub const DataType = enum {
+    U8,
+    U16,
+    U32,
+    U64,
+    F16,
+    F32,
+    F64,
+    BF16,
+    F8_E4M3,
+
+    pub fn str(self: DataType) []const u8 {
+        return switch (self) {
+            .U8 => "U8",
+            .U16 => "U16",
+            .U32 => "U32",
+            .U64 => "U64",
+            .F16 => "F16",
+            .F32 => "F32",
+            .F64 => "F64",
+            .BF16 => "BF16",
+            .F8_E4M3 => "F8_E4M3",
+        };
+    }
+};
 
 fn expectedDataType(comptime T: type) ?DataType {
     switch (T) {
