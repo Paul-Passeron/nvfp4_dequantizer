@@ -66,6 +66,25 @@ fn sanitizeError(e: anyerror, err: *std.Io.Writer) AllErrors {
     };
 }
 
+fn getAllNVFP4Tensors(
+    a: std.mem.Allocator,
+    r: *const st.Registry,
+) ![]nvfp4.Tensor {
+    var tensors = std.ArrayList(nvfp4.Tensor).empty;
+    errdefer tensors.deinit(a);
+
+    var it = r.iterator();
+    while (it.next()) |t| {
+        if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
+            const base = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
+            const val = try nvfp4.Tensor.fromRegistry(r, base) orelse
+                return error.MissingTensor;
+            try tensors.append(a, val);
+        }
+    }
+    return try tensors.toOwnedSlice(a);
+}
+
 fn doWork(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -74,11 +93,71 @@ fn doWork(
 ) !void {
     var opts = try Options.fromArgs(allocator, args);
     defer opts.deinit(allocator);
+
     try checkFile(io, opts.in);
+
     var r: st.Registry = try .fromPath(allocator, io, opts.in);
     defer r.deinit();
 
+    var entries: std.ArrayList(job.Entry) = .empty;
+    var offsets: std.ArrayList(usize) = .empty;
+    defer entries.deinit(allocator);
+    defer offsets.deinit(allocator);
+
+    const nvfp4s = try getAllNVFP4Tensors(allocator, &r);
+    defer allocator.free(nvfp4s);
+
+    var bases = try allocator.alloc([]const u8, nvfp4s.len);
+    defer allocator.free(bases);
+
+    var total_byte_len: usize = 0;
+
+    for (nvfp4s, 0..) |t, i| {
+        const name = t.weight_packed.name;
+        const base = std.mem.cutSuffix(u8, name, ".weight_packed").?;
+        bases[i] = base;
+        try entries.append(allocator, .{ .nvfp4 = t });
+        try offsets.append(allocator, total_byte_len);
+        total_byte_len += t.dequantByteLen();
+    }
+
+    var it = r.iterator();
+
+    while (it.next()) |t| {
+        var is_nvfp4 = false;
+        for (bases) |b| {
+            if (std.mem.startsWith(u8, t.value_ptr.name, b)) {
+                is_nvfp4 = true;
+                break;
+            }
+        }
+        if (is_nvfp4) continue;
+        try entries.append(allocator, .{ .regular = t.value_ptr });
+        try offsets.append(allocator, total_byte_len);
+        total_byte_len += t.value_ptr.byte_len;
+    }
+
+    // TODO: maybe write to file directly, as it will save the cost of copying
+    // the buffer to the file
+
+    const output_buffer = try allocator.alloc(u8, total_byte_len);
+    defer allocator.free(output_buffer);
+
+    var jobs: []job.Job = try allocator.alloc(job.Job, entries.items.len);
+    defer allocator.free(jobs);
+
+    for (entries.items, 0..) |e, i| {
+        const start = offsets.items[i];
+        const end = start + e.byteLen();
+        const mem: []u8 = output_buffer[start..end];
+        jobs[i] = .{ .tensor = e, .dest = .{ .mem = mem } };
+    }
+
+    try job.readAll(io, .{ .ordering = .simd }, jobs);
+
+    try out.print("jobs count = {}\n", .{jobs.len});
     try out.print("registry count = {}\n", .{r.count()});
+    try out.print("total byte count = {}\n", .{total_byte_len});
     try out.print("in = `{s}`, out = `{s}`\n", .{ opts.in, opts.out });
 }
 
@@ -96,9 +175,8 @@ pub fn main(init: std.process.Init) !void {
     var err_writer = std.Io.File.stderr().writer(io, &err_buf);
     const err = &err_writer.interface;
 
-    doWork(allocator, io, out, args) catch |e| {
+    doWork(allocator, io, out, args) catch |e|
         failError(err, sanitizeError(e, err));
-    };
 
     try out.flush();
 }
