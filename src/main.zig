@@ -153,12 +153,18 @@ fn doWork(
         jobs[i] = .{ .tensor = e, .dest = .{ .mem = mem } };
     }
 
+    const clock = std.Io.Clock.awake;
+    const start_time = clock.now(io);
+
     try job.runAllJobs(io, .{ .ordering = .simd }, jobs);
 
-    try out.print("jobs count = {}\n", .{jobs.len});
-    try out.print("registry count = {}\n", .{r.count()});
-    try out.print("total byte count = {}\n", .{total_byte_len});
+    const end_time = clock.now(io);
+    const duration = start_time.durationTo(end_time);
+
     try out.print("in = `{s}`, out = `{s}`\n", .{ opts.in, opts.out });
+    try out.print("registry count = {}\n", .{r.count()});
+    try out.print("jobs count = {}\n", .{jobs.len});
+    try out.print("Read {} MB in {f}.\n", .{ total_byte_len / 1024 / 1024, duration });
 }
 
 pub fn main(init: std.process.Init) !void {
