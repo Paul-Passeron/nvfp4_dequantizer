@@ -141,24 +141,6 @@ fn doWork(
     // TODO: maybe write to file directly, as it will save the cost of copying
     // the buffer to the file
 
-    const output_buffer = try allocator.alloc(u8, total_byte_len);
-    defer allocator.free(output_buffer);
-
-    var jobs: []job.Job = try allocator.alloc(job.Job, entries.items.len);
-    defer allocator.free(jobs);
-
-    for (entries.items, 0..) |e, i| {
-        const start = offsets.items[i];
-        const end = start + e.byteLen();
-        const mem: []u8 = output_buffer[start..end];
-        jobs[i] = .{ .tensor = e, .dest = .{ .mem = mem } };
-    }
-
-    const clock = std.Io.Clock.awake;
-    const start_time = clock.now(io);
-
-    try job.runAllJobs(io, .{ .ordering = .simd }, jobs);
-
     const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
     defer out_file.close(io);
 
@@ -178,8 +160,8 @@ fn doWork(
             .nvfp4 => ".weight",
             else => "",
         } });
-        try fw.print("\"dtype\":\"{s}\"", .{e.dtype().str()});
-        try fw.print("\"offsets\":[{}, {}],", .{ offset, offset + e.byteLen() });
+        try fw.print("\"dtype\":\"{s}\",", .{e.dtype().str()});
+        try fw.print("\"data_offsets\":[{}, {}],", .{ offset, offset + e.byteLen() });
         try fw.print("\"shape\":[", .{});
         var shape_buffer: [2]u64 = undefined;
         const shape: []const u64 =
@@ -196,19 +178,27 @@ fn doWork(
         }
         try fw.print("]}}", .{});
     }
-    try fw.print("}}", .{});
+    try fw.print("}}\n", .{});
 
-    const header_bytes: u64 = f_writer.pos - 8;
+    const header_bytes: u64 = f_writer.logicalPos() - 8;
     try f_writer.seekTo(0);
     _ = try fw.writeInt(u64, header_bytes, .little);
-    try f_writer.end();
-    var rest: []const u8 = output_buffer;
-    while (rest.len > 0) {
-        const n = @min(rest.len, 1 << 30);
-        try fw.writeAll(rest[0..n]);
-        rest = rest[n..];
-    }
     try fw.flush();
+
+    var jobs: []job.Job = try allocator.alloc(job.Job, entries.items.len);
+    defer allocator.free(jobs);
+
+    for (entries.items, 0..) |e, i| {
+        jobs[i] = .{ .tensor = e, .dest = .{ .file = .{
+            .file = &out_file,
+            .offset = offsets.items[i] + header_bytes + 8,
+        } } };
+    }
+
+    const clock = std.Io.Clock.awake;
+    const start_time = clock.now(io);
+
+    try job.runAllJobs(io, .{ .ordering = .simd }, jobs);
 
     const end_time = clock.now(io);
     const duration = start_time.durationTo(end_time);

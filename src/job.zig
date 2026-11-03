@@ -5,6 +5,7 @@ const nvfp4 = @import("nvfp4");
 pub const Destination = union(enum) {
     /// length must be `tensor.byteLen()`
     mem: []u8,
+    file: struct { file: *const std.Io.File, offset: u64 },
     discard,
 };
 
@@ -55,7 +56,7 @@ pub const Job = struct {
         }
     }
 
-    inline fn readIntoDest(reader: *std.Io.Reader, dest: Destination) !void {
+    inline fn readIntoDest(io: std.Io, reader: *std.Io.Reader, dest: Destination) !void {
         switch (dest) {
             .mem => |buffer| {
                 var w = std.Io.Writer.fixed(buffer);
@@ -65,6 +66,12 @@ pub const Job = struct {
                 var buffer: [32 * 1024]u8 = undefined;
                 var w = std.Io.Writer.Discarding.init(&buffer);
                 _ = try reader.streamRemaining(&w.writer);
+            },
+            .file => |f| {
+                var buffer: [32 * 1024]u8 = undefined;
+                var w = f.file.writer(io, &buffer);
+                w.pos = f.offset;
+                _ = try reader.streamRemaining(&w.interface);
             },
         }
     }
@@ -81,7 +88,7 @@ pub const Job = struct {
             .interface = &interface_buffer,
         });
         defer reader.deinit();
-        try readIntoDest(&reader.interface, self.dest);
+        try readIntoDest(io, &reader.interface, self.dest);
     }
 
     pub fn runNVFP4(self: *Job, t: nvfp4.Tensor, io: std.Io, config: nvfp4.DequantConfig) !void {
@@ -93,7 +100,7 @@ pub const Job = struct {
             .scales = &scale_buffer,
         }, config);
         defer reader.deinit();
-        try readIntoDest(&reader.interface, self.dest);
+        try readIntoDest(io, &reader.interface, self.dest);
     }
 };
 
