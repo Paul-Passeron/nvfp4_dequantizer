@@ -70,6 +70,7 @@ fn sanitizeError(e: anyerror, err: *std.Io.Writer) AllErrors {
 fn writeJSONHeader(
     entries: []const job.Entry,
     offsets: []const usize,
+    metadata: ?std.json.Value,
     w: *std.Io.Writer,
 ) !void {
     try w.print("{{", .{});
@@ -97,6 +98,12 @@ fn writeJSONHeader(
             try w.print("{}", .{dim});
         }
         try w.print("]}}", .{});
+    }
+    if (metadata) |m| {
+        try w.print(",\"__metadata__\":", .{});
+        try std.json.Stringify.value(m, .{
+            .whitespace = .minified,
+        }, w);
     }
     try w.print("}}", .{});
 }
@@ -170,7 +177,7 @@ fn doWork(
     // Placeholder header size
     const zero: u64 = 0;
     _ = try fw.write(std.mem.asBytes(&zero));
-    try writeJSONHeader(entries.items, offsets.items, fw);
+    try writeJSONHeader(entries.items, offsets.items, r.metadata, fw);
 
     const json_bytes: u64 = f_writer.logicalPos() - 8;
     const padding: usize =
