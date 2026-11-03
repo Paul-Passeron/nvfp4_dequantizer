@@ -61,6 +61,7 @@ pub const Job = struct {
             .mem => |buffer| {
                 var w = std.Io.Writer.fixed(buffer);
                 _ = try reader.streamRemaining(&w);
+                try w.flush();
             },
             .discard => {
                 var buffer: [32 * 1024]u8 = undefined;
@@ -72,6 +73,7 @@ pub const Job = struct {
                 var w = f.file.writer(io, &buffer);
                 w.pos = f.offset;
                 _ = try reader.streamRemaining(&w.interface);
+                try w.flush();
             },
         }
     }
