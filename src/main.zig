@@ -178,7 +178,7 @@ fn doWork(
         }
         try fw.print("]}}", .{});
     }
-    try fw.print("}}\n", .{});
+    try fw.print("}} ", .{});
 
     const header_bytes: u64 = f_writer.logicalPos() - 8;
     try f_writer.seekTo(0);
