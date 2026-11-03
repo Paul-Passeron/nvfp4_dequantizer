@@ -83,7 +83,7 @@ pub const Job = struct {
     }
 };
 
-pub fn readAll(io: std.Io, config: nvfp4.DequantConfig, jobs: []Job) std.Io.Cancelable!void {
+pub fn runAllJobs(io: std.Io, config: nvfp4.DequantConfig, jobs: []Job) std.Io.Cancelable!void {
     var group: std.Io.Group = .init;
     for (jobs) |*job|
         group.async(io, Job.run, .{ job, io, config });

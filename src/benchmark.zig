@@ -144,7 +144,7 @@ fn benchmarkJobs(
 
     const clock = Clock.awake;
     const start = clock.now(io);
-    try job.readAll(io, config, jobs);
+    try job.runAllJobs(io, config, jobs);
     const end = clock.now(io);
 
     for (jobs) |j| {

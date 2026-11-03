@@ -153,7 +153,7 @@ fn doWork(
         jobs[i] = .{ .tensor = e, .dest = .{ .mem = mem } };
     }
 
-    try job.readAll(io, .{ .ordering = .simd }, jobs);
+    try job.runAllJobs(io, .{ .ordering = .simd }, jobs);
 
     try out.print("jobs count = {}\n", .{jobs.len});
     try out.print("registry count = {}\n", .{r.count()});
