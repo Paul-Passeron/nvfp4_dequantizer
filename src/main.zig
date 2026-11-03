@@ -1,6 +1,7 @@
 const std = @import("std");
 const st = @import("st");
 const nvfp4 = @import("nvfp4");
+const job = @import("job");
 
 const usage =
     \\Usage: nvfp4 <in .safetensor> <out .safetensor>

@@ -1,6 +1,7 @@
 const std = @import("std");
 const nvfp4 = @import("nvfp4");
 const st = @import("st");
+const job = @import("job");
 const Io = std.Io;
 const Clock = Io.Clock;
 const print = std.debug.print;
@@ -55,8 +56,8 @@ fn getAllNVFP4Tensors(
 fn getAllNVFP4Jobs(
     a: std.mem.Allocator,
     r: *const st.Registry,
-) ![]nvfp4.Job {
-    var jobs = std.ArrayList(nvfp4.Job).empty;
+) ![]job.Job {
+    var jobs = std.ArrayList(job.Job).empty;
     errdefer {
         for (jobs.items) |j| {
             switch (j.dest) {
@@ -71,13 +72,13 @@ fn getAllNVFP4Jobs(
     defer a.free(tensors);
 
     for (tensors) |t| {
-        try jobs.append(a, .{ .dest = .discard, .tensor = t });
+        try jobs.append(a, .{ .dest = .discard, .tensor = .{ .nvfp4 = t } });
     }
 
     return try jobs.toOwnedSlice(a);
 }
 
-fn freeJobs(a: std.mem.Allocator, jobs: []nvfp4.Job) void {
+fn freeJobs(a: std.mem.Allocator, jobs: []job.Job) void {
     for (jobs) |j| {
         switch (j.dest) {
             .mem => |buffer| {
@@ -132,18 +133,18 @@ fn benchmark(
 
 fn benchmarkJobs(
     io: Io,
-    jobs: []nvfp4.Job,
+    jobs: []job.Job,
     config: nvfp4.DequantConfig,
 ) !BenchRes {
     var bytes: usize = 0;
     for (jobs) |*j| {
         j.err = null;
-        bytes += j.tensor.dequantByteLen();
+        bytes += j.tensor.byteLen();
     }
 
     const clock = Clock.awake;
     const start = clock.now(io);
-    try nvfp4.dequantizeAll(io, config, jobs);
+    try job.readAll(io, config, jobs);
     const end = clock.now(io);
 
     for (jobs) |j| {
@@ -158,13 +159,13 @@ fn benchmarkJobs(
 
 fn benchmarkJobsSequentially(
     io: Io,
-    jobs: []nvfp4.Job,
+    jobs: []job.Job,
     config: nvfp4.DequantConfig,
 ) !BenchRes {
     var bytes: usize = 0;
     for (jobs) |*j| {
         j.err = null;
-        bytes += j.tensor.dequantByteLen();
+        bytes += j.tensor.byteLen();
     }
 
     const clock = Clock.awake;
@@ -260,14 +261,6 @@ fn kernelBenchmark(
         .duration = start.durationTo(end),
         .bytes_read = bytes,
     };
-}
-
-test "dequantizeAll on empty" {
-    const a = std.heap.c_allocator;
-    var threaded: Io.Threaded = .init(a, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    _ = try nvfp4.dequantizeAll(io, .{ .ordering = .sequential }, &.{});
 }
 
 test "all benchmarks work with all configs" {

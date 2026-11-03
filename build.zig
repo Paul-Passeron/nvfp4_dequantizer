@@ -17,6 +17,15 @@ pub fn build(b: *std.Build) void {
             .{ .module = st, .name = "st" },
         },
     });
+    const job = b.createModule(.{
+        .root_source_file = b.path("src/job.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .module = st, .name = "st" },
+            .{ .module = nvfp4, .name = "nvfp4" },
+        },
+    });
     const benchmarks = b.createModule(.{
         .root_source_file = b.path("src/benchmark.zig"),
         .target = target,
@@ -24,6 +33,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .module = nvfp4, .name = "nvfp4" },
             .{ .module = st, .name = "st" },
+            .{ .module = job, .name = "job" },
         },
     });
     const main = b.createModule(.{
@@ -33,6 +43,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .module = nvfp4, .name = "nvfp4" },
             .{ .module = st, .name = "st" },
+            .{ .module = job, .name = "job" },
         },
     });
 
@@ -81,6 +92,9 @@ pub fn build(b: *std.Build) void {
     const nvfp4_unit_tests = b.addTest(.{
         .root_module = nvfp4,
     });
+    const job_unit_tests = b.addTest(.{
+        .root_module = job,
+    });
     const st_unit_tests = b.addTest(.{
         .root_module = st,
     });
@@ -89,6 +103,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const run_nvfp4_unit_tests = b.addRunArtifact(nvfp4_unit_tests);
+    const run_job_unit_tests = b.addRunArtifact(job_unit_tests);
     const run_st_unit_tests = b.addRunArtifact(st_unit_tests);
     const run_bench_unit_tests = b.addRunArtifact(bench_unit_tests);
     const exe_unit_tests = b.addTest(.{
@@ -102,6 +117,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_st_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
     test_step.dependOn(&run_bench_unit_tests.step);
+    test_step.dependOn(&run_job_unit_tests.step);
 
     const all_bench_cmd = b.addRunArtifact(bench);
     all_bench_cmd.step.dependOn(&bench_artifact.step);
