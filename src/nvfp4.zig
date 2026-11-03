@@ -146,17 +146,9 @@ fn splitBytesIntoNibbles(
 ) @Vector(n * 2, u8) {
     const mask: @Vector(n, u8) = @splat(0xF);
     const lo = bytes & mask;
-    const hi = (bytes >> @splat(4)) & mask;
-
-    const indices = comptime blk: {
-        var idx: [n * 2]i32 = undefined;
-        for (0..n) |i| {
-            idx[2 * i + 0] = @intCast(i);
-            idx[2 * i + 1] = ~@as(i32, @intCast(i));
-        }
-        break :blk idx;
-    };
-    const interleaved: @Vector(n * 2, u8) = @shuffle(u8, lo, hi, indices);
+    const hi = (bytes >> @splat(4));
+    const interleaved: @Vector(n * 2, u8) =
+        @shuffle(u8, lo, hi, interleaveMask(n));
     return interleaved;
 }
 
