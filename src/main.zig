@@ -86,6 +86,40 @@ fn getAllNVFP4Tensors(
     return try tensors.toOwnedSlice(a);
 }
 
+fn writeJSONHeader(
+    entries: []const job.Entry,
+    offsets: []const usize,
+    w: *std.Io.Writer,
+) !void {
+    try w.print("{{", .{});
+
+    for (entries, offsets, 0..) |e, offset, i| {
+        if (i > 0) try w.print(",", .{});
+        try w.print("\"{s}{s}\":{{", .{ e.name(), switch (e) {
+            .nvfp4 => ".weight",
+            else => "",
+        } });
+        try w.print("\"dtype\":\"{s}\",", .{e.dtype().str()});
+        try w.print("\"data_offsets\":[{}, {}],", .{ offset, offset + e.byteLen() });
+        try w.print("\"shape\":[", .{});
+        var shape_buffer: [2]u64 = undefined;
+        const shape: []const u64 =
+            switch (e) {
+                .nvfp4 => |t| blk: {
+                    shape_buffer = t.shape();
+                    break :blk &shape_buffer;
+                },
+                .regular => |t| t.shape,
+            };
+        for (shape, 0..) |dim, dim_idx| {
+            if (dim_idx > 0) try w.print(",", .{});
+            try w.print("{}", .{dim});
+        }
+        try w.print("]}}", .{});
+    }
+    try w.print("}} ", .{});
+}
+
 fn doWork(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -127,7 +161,11 @@ fn doWork(
     while (it.next()) |t| {
         var is_nvfp4 = false;
         for (bases) |b| {
-            if (std.mem.startsWith(u8, t.value_ptr.name, b)) {
+            const name = t.value_ptr.name;
+            if (name.len > b.len and
+                std.mem.startsWith(u8, name, b) and
+                name[b.len] == '.')
+            {
                 is_nvfp4 = true;
                 break;
             }
@@ -151,34 +189,7 @@ fn doWork(
     // Placeholder header size
     const zero: u64 = 0;
     _ = try fw.write(std.mem.asBytes(&zero));
-
-    try fw.print("{{", .{});
-
-    for (entries.items, offsets.items, 0..) |e, offset, i| {
-        if (i > 0) try fw.print(",", .{});
-        try fw.print("\"{s}{s}\":{{", .{ e.name(), switch (e) {
-            .nvfp4 => ".weight",
-            else => "",
-        } });
-        try fw.print("\"dtype\":\"{s}\",", .{e.dtype().str()});
-        try fw.print("\"data_offsets\":[{}, {}],", .{ offset, offset + e.byteLen() });
-        try fw.print("\"shape\":[", .{});
-        var shape_buffer: [2]u64 = undefined;
-        const shape: []const u64 =
-            switch (e) {
-                .nvfp4 => |t| blk: {
-                    shape_buffer = t.shape();
-                    break :blk &shape_buffer;
-                },
-                .regular => |t| t.shape,
-            };
-        for (shape, 0..) |dim, dim_idx| {
-            if (dim_idx > 0) try fw.print(",", .{});
-            try fw.print("{}", .{dim});
-        }
-        try fw.print("]}}", .{});
-    }
-    try fw.print("}} ", .{});
+    try writeJSONHeader(entries.items, offsets.items, fw);
 
     const header_bytes: u64 = f_writer.logicalPos() - 8;
     try f_writer.seekTo(0);
@@ -206,7 +217,8 @@ fn doWork(
     try out.print("in = `{s}`, out = `{s}`\n", .{ opts.in, opts.out });
     try out.print("registry count = {}\n", .{r.count()});
     try out.print("jobs count = {}\n", .{jobs.len});
-    try out.print("Read {} MB and wrote {} MB in {f}.\n", .{ total_byte_len / 1024 / 1024, f_writer.pos / 1024 / 1024, duration });
+    const total_file_size = 8 + header_bytes + total_byte_len;
+    try out.print("read \t{} bytes\nwrote \t{} bytes\nin {f}.\n", .{ total_byte_len, total_file_size, duration });
 }
 
 pub fn main(init: std.process.Init) !void {
