@@ -34,25 +34,6 @@ const BenchRes = struct {
     }
 };
 
-fn getAllNVFP4Tensors(
-    a: std.mem.Allocator,
-    r: *const st.Registry,
-) ![]nvfp4.Tensor {
-    var tensors = std.ArrayList(nvfp4.Tensor).empty;
-    errdefer tensors.deinit(a);
-
-    var it = r.iterator();
-    while (it.next()) |t| {
-        if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
-            const base = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
-            const val = try nvfp4.Tensor.fromRegistry(r, base) orelse
-                return error.MissingTensor;
-            try tensors.append(a, val);
-        }
-    }
-    return try tensors.toOwnedSlice(a);
-}
-
 fn getAllNVFP4Jobs(
     a: std.mem.Allocator,
     r: *const st.Registry,
@@ -68,7 +49,7 @@ fn getAllNVFP4Jobs(
         jobs.deinit(a);
     }
 
-    const tensors = try getAllNVFP4Tensors(a, r);
+    const tensors = try nvfp4.getAllNVFP4Tensors(a, r);
     defer a.free(tensors);
 
     for (tensors) |t| {
@@ -103,7 +84,7 @@ fn benchmark(
     var reg: st.Registry = try .fromPath(a, io, filename);
     defer reg.deinit();
 
-    const tensors = try getAllNVFP4Tensors(a, &reg);
+    const tensors = try nvfp4.getAllNVFP4Tensors(a, &reg);
     defer a.free(tensors);
 
     const clock = Clock.awake;

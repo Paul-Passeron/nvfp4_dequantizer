@@ -67,25 +67,6 @@ fn sanitizeError(e: anyerror, err: *std.Io.Writer) AllErrors {
     };
 }
 
-fn getAllNVFP4Tensors(
-    a: std.mem.Allocator,
-    r: *const st.Registry,
-) ![]nvfp4.Tensor {
-    var tensors = std.ArrayList(nvfp4.Tensor).empty;
-    errdefer tensors.deinit(a);
-
-    var it = r.iterator();
-    while (it.next()) |t| {
-        if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
-            const base = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
-            const val = try nvfp4.Tensor.fromRegistry(r, base) orelse
-                return error.MissingTensor;
-            try tensors.append(a, val);
-        }
-    }
-    return try tensors.toOwnedSlice(a);
-}
-
 fn writeJSONHeader(
     entries: []const job.Entry,
     offsets: []const usize,
@@ -139,7 +120,7 @@ fn doWork(
     defer entries.deinit(allocator);
     defer offsets.deinit(allocator);
 
-    const nvfp4s = try getAllNVFP4Tensors(allocator, &r);
+    const nvfp4s = try nvfp4.getAllNVFP4Tensors(allocator, &r);
     defer allocator.free(nvfp4s);
 
     var bases = try allocator.alloc([]const u8, nvfp4s.len);

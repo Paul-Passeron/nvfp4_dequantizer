@@ -1023,3 +1023,22 @@ test "nvfp4 reader through a small interface buffer simd" {
         try std.testing.expectApproxEqRel(e, v, 1e-3);
     }
 }
+
+pub fn getAllNVFP4Tensors(
+    a: std.mem.Allocator,
+    r: *const st.Registry,
+) ![]Tensor {
+    var tensors = std.ArrayList(Tensor).empty;
+    errdefer tensors.deinit(a);
+
+    var it = r.iterator();
+    while (it.next()) |t| {
+        if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
+            const base = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
+            const val = try Tensor.fromRegistry(r, base) orelse
+                return error.MissingTensor;
+            try tensors.append(a, val);
+        }
+    }
+    return try tensors.toOwnedSlice(a);
+}
