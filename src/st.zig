@@ -350,26 +350,24 @@ pub const Registry = struct {
         var read_buf: [4096]u8 = undefined;
         var reader: std.Io.File.Reader = file.reader(io, &read_buf);
         const n = try reader.interface.takeInt(u64, .little);
+        // The JSON blob lives as long as the registry (arena allocated)
         const json_blob = try reader.interface.readAlloc(a, n);
-        // TODO: this uses the arena allocator so freeing it might not
-        // do anything... Fine for now I guess but should be aware of
-        // that I think. Either we should keep the child allocator in
-        // the registry for that exact reason or we should do something
-        // else...
-        defer a.free(json_blob);
 
         const root = try std.json.parseFromSliceLeaky(
             std.json.Value,
             a,
             json_blob,
-            .{ .allocate = .alloc_always },
+            .{ .allocate = .alloc_if_needed },
         );
         var it = root.object.iterator();
         const allocated_path = try self.arena.allocator().dupe(u8, path);
         while (it.next()) |entry| {
             if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) {
-                if (entry.value_ptr.* != .object) return error.InvalidMetadata;
-                self.metadata = .{ .object = try entry.value_ptr.object.clone(a) };
+                if (entry.value_ptr.* != .object)
+                    return error.InvalidMetadata;
+                self.metadata = .{
+                    .object = entry.value_ptr.object,
+                };
                 continue;
             }
 
@@ -388,13 +386,15 @@ pub const Registry = struct {
                 .{},
             );
 
+            const offset = raw_info.data_offsets[0] + 8 + n;
+            const byte_len = raw_info.data_offsets[1] - raw_info.data_offsets[0];
             const t: Tensor = .{
                 .name = entry.key_ptr.*,
                 .path = allocated_path,
                 .shape = raw_info.shape,
                 .dtype = raw_info.dtype,
-                .offset = raw_info.data_offsets[0] + 8 + n,
-                .byte_len = raw_info.data_offsets[1] - raw_info.data_offsets[0],
+                .offset = offset,
+                .byte_len = byte_len,
             };
             try self.tensors.put(a, t.name, t);
         }
