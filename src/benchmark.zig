@@ -6,6 +6,33 @@ const Io = std.Io;
 const Clock = Io.Clock;
 const print = std.debug.print;
 
+const all_dequant = [_]nvfp4.DequantAlgo{ .sequential, .simd };
+const all_e2m1_alg = [_]nvfp4.e2m1Alg{ .bits, .look_up_table, .tbl };
+const all_e4m3_alg = [_]nvfp4.e4m3Alg{ .bits, .look_up_table };
+
+const config_count =
+    all_dequant.len *
+    all_e2m1_alg.len *
+    all_e4m3_alg.len;
+
+const all_configs: [config_count]nvfp4.DequantConfig = blk: {
+    var res: [config_count]nvfp4.DequantConfig = undefined;
+    var i = 0;
+    for (all_dequant) |d| {
+        for (all_e2m1_alg) |e2m1| {
+            for (all_e4m3_alg) |e4m3| {
+                res[i] = .{
+                    .dequant = d,
+                    .e2m1 = e2m1,
+                    .e4m3 = e4m3,
+                };
+                i += 1;
+            }
+        }
+    }
+    break :blk res;
+};
+
 const BenchRes = struct {
     duration: Io.Duration,
     bytes_read: usize,
@@ -271,16 +298,10 @@ test "all benchmarks work with all configs" {
     defer reg.deinit();
     const jobs = try getAllNVFP4Jobs(a, &reg);
     defer freeJobs(a, jobs);
-    for ([_]nvfp4.DequantAlgo{ .sequential, .simd }) |ord| {
-        for ([_]nvfp4.e2m1Alg{ .bits, .look_up_table, .tbl }) |alg| {
-            const config: nvfp4.DequantConfig = .{
-                .dequant = ord,
-                .e2m1 = alg,
-            };
-            _ = try benchmark(a, io, filename, config);
-            _ = try benchmarkJobs(io, jobs, config);
-            _ = try benchmarkJobsSequentially(io, jobs, config);
-        }
+    for (all_configs) |config| {
+        _ = try benchmark(a, io, filename, config);
+        _ = try benchmarkJobs(io, jobs, config);
+        _ = try benchmarkJobsSequentially(io, jobs, config);
     }
 }
 
@@ -368,27 +389,20 @@ pub fn main() !void {
     const big_out = try a.alloc(f32, 64 * 1024 * 1024 / @sizeOf(f32));
     defer a.free(big_out);
 
-    const benchmarks = [_]Benchmark{
+    const all_benchmarks = [_]Benchmark{
         .jobs,
         .jobs_seq,
         .{ .kernel = .{ .out = big_out, .is_big = true } },
         .{ .kernel = .{ .out = small_out, .is_big = false } },
         .regular,
     };
-    const ords = [_]nvfp4.DequantAlgo{ .sequential, .simd };
-    const algs = [_]nvfp4.e2m1Alg{ .bits, .look_up_table, .tbl };
 
     const warmup = 3;
 
     for (0..warmup) |_| {
-        for (benchmarks) |b| {
-            for (ords) |ord| {
-                for (algs) |alg| {
-                    _ = try b.run(.{
-                        .dequant = ord,
-                        .e2m1 = alg,
-                    }, a, io, filename);
-                }
+        for (all_benchmarks) |b| {
+            for (all_configs) |config| {
+                _ = try b.run(config, a, io, filename);
             }
         }
     }
@@ -398,25 +412,19 @@ pub fn main() !void {
     var min_res: BenchRes = undefined;
 
     var first = true;
-    for (benchmarks) |b| {
-        for (ords) |ord| {
-            for (algs) |alg| {
-                const config: nvfp4.DequantConfig = .{
-                    .dequant = ord,
-                    .e2m1 = alg,
-                };
-                print("Config = {}\n", .{config});
-                const res = try runBenchmark(b, config, a, io, filename);
-                const r = res.duration.toMilliseconds();
-                const rm = min_res.duration.toMilliseconds();
-                if (first or r < rm) {
-                    min_b = b;
-                    min_config = config;
-                    min_res = res;
-                }
-                print("\n", .{});
-                if (first) first = false;
+    for (all_benchmarks) |b| {
+        for (all_configs) |config| {
+            print("Config = {}\n", .{config});
+            const res = try runBenchmark(b, config, a, io, filename);
+            const r = res.duration.toMilliseconds();
+            const rm = min_res.duration.toMilliseconds();
+            if (first or r < rm) {
+                min_b = b;
+                min_config = config;
+                min_res = res;
             }
+            print("\n", .{});
+            if (first) first = false;
         }
     }
 
