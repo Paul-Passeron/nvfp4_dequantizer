@@ -8,7 +8,7 @@ const usage =
     \\
     \\Options:
     \\  -o, --output <path>           Output file     (default: out.safetensor)
-    \\  -d, --datatype <f32|f16|bf16> output type     (default: f32)
+    \\  -d, --datatype <f32|f16|bf16> Output type     (default: f32)
     \\  -h, --help                    Show this help
 ;
 
@@ -110,6 +110,10 @@ fn parseArgs(
         } else if (isOption(arg.name, "-d", "--datatype")) {
             const dt = try takeValue(args, i, arg.value, arg.name, err);
             i += 1;
+
+            // Kind of over-engineered since we will only accept f32, f16
+            // and bf16 but I wanted to try out zig comptime reflection
+            // a bit.
             if (parseEnumLitMayBeLowercased(st.DataType, dt)) |val| {
                 opts.datatype = val;
             } else {
@@ -290,22 +294,34 @@ pub fn main(init: std.process.Init) !void {
     const clock = std.Io.Clock.awake;
     const start_time = clock.now(io);
 
-    const opts = parseArgs(args, err) catch |e| {
-        switch (e) {
-            error.HelpRequested => {
-                err.print(usage ++ "\n", .{}) catch {};
-                return;
-            },
-            error.OutOfMemory => return e,
-            else => fail(err),
-        }
+    const opts = parseArgs(args, err) catch |e| switch (e) {
+        error.HelpRequested => {
+            err.print(usage ++ "\n", .{}) catch {};
+            try err.flush();
+            return;
+        },
+        error.OutOfMemory => return e,
+        else => fail(err),
     };
+
+    switch (opts.datatype) {
+        .BF16, .F16, .F32 => {},
+        else => {
+            failMessage(
+                err,
+                "Unsupported datatype `{}`, expected F32, F16 or BF16.",
+                .{opts.datatype},
+            );
+            std.process.exit(2);
+        },
+    }
+
     var r = st.Registry.fromPath(allocator, io, opts.in) catch |e| {
         failMessage(err, "could not load safetensors file at `{s}`: {}", .{
             opts.in,
             e,
         });
-        std.process.exit(2);
+        fail(err);
     };
     defer r.deinit();
 
