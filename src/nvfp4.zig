@@ -8,6 +8,8 @@ pub const e4m3Alg = enum { look_up_table, bits };
 
 pub const DequantAlgo = enum { sequential, simd };
 
+const bf16 = enum(u16) { _ };
+
 const default_e2m1_algo: e2m1Alg = blk: {
     if (builtin.cpu.arch == .aarch64) {
         break :blk .tbl;
@@ -38,24 +40,39 @@ inline fn E2M1FromParts(
     return bits;
 }
 
-inline fn decodeE2M1Impl(x: u4) f32 {
+inline fn decodeE2M1Impl(x: u4) f16 {
     const sign: u16 = @as(u16, x >> 3) << 15;
     const e: u16 = (x >> 1) & 0b11;
     const m: u16 = x & 0b1;
-    const bits = E2M1FromParts(sign, e, m);
-    return @as(f32, @as(f16, @bitCast(bits)));
+    return @bitCast(E2M1FromParts(sign, e, m));
 }
 
-const e2m1_table: [16]f32 = blk: {
-    var table: [16]f32 = undefined;
-    for (&table, 0..) |*v, i| {
+const e2m1_table_f16: [16]f16 = blk: {
+    var table: [16]f16 = undefined;
+    for (&table, 0..) |*v, i|
         v.* = decodeE2M1Impl(@as(u4, i));
+    break :blk table;
+};
+
+const e2m1_table_f32: [16]f32 = blk: {
+    var table: [16]f32 = undefined;
+    for (&table, e2m1_table_f16) |*v, x| v.* = x;
+    break :blk table;
+};
+
+const e2m1_table_bf16: [16]bf16 = blk: {
+    var table: [16]bf16 = undefined;
+    for (&table, e2m1_table_f32) |*v, x| {
+        const as_u32: u32 = @bitCast(x);
+        const truncated: u16 = @truncate(as_u32);
+        v.* = @bitCast(truncated);
     }
+
     break :blk table;
 };
 
 pub inline fn decodeE2M1(nibble: u4) f32 {
-    return e2m1_table[nibble];
+    return e2m1_table_f32[nibble];
 }
 
 test "decodeE2M1 covers all 16 values" {
@@ -144,7 +161,7 @@ fn splitBytesIntoNibbles(
 
 fn e2m1ByteTable(comptime shift: u5) @Vector(16, u8) {
     var t: [16]u8 = undefined;
-    for (&t, e2m1_table) |*x, f| {
+    for (&t, e2m1_table_f32) |*x, f| {
         const bits: u32 = @bitCast(f);
         std.debug.assert(bits & 0xFFFF == 0);
         x.* = @truncate(bits >> shift);
@@ -211,7 +228,7 @@ inline fn decodeE2M1FromIndices(idx: @Vector(16, u8)) @Vector(16, u32) {
     return (@as(@Vector(16, u32), hi16) << @splat(16));
 }
 
-fn e2m1RangeBits(
+fn e2m1RangeBitsF32(
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
 ) @Vector(n * 2, f32) {
@@ -239,21 +256,67 @@ fn e2m1RangeBits(
     return @bitCast(bits);
 }
 
-fn e2m1RangeLookUpTable(
+fn e2m1RangeBits(
+    comptime ty: type,
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
-) @Vector(n * 2, f32) {
-    var res: [n * 2]f32 = undefined;
+) @Vector(n * 2, ty) {
+    return switch (ty) {
+        inline f32 => e2m1RangeBitsF32(n, packed_bytes),
+        inline f16 => @panic("TODO: f16 support"),
+        inline bf16 => @panic("TODO: bf16 support"),
+        else => @compileError(
+            "Expected type to be f32, f16 or bf16, but got " ++
+                @typeName(ty),
+        ),
+    };
+}
+
+fn e2m1Table(comptime ty: type) *const [16]ty {
+    return switch (ty) {
+        inline f32 => &e2m1_table_f32,
+        inline f16 => &e2m1_table_f16,
+        inline bf16 => &e2m1_table_bf16,
+        else => @compileError(
+            "Expected type to be f32, f16 or bf16, but got " ++
+                @typeName(ty),
+        ),
+    };
+}
+
+fn e2m1RangeLookUpTable(
+    comptime ty: type,
+    comptime n: comptime_int,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, ty) {
+    var res: [n * 2]ty = undefined;
+    const table = e2m1Table(ty);
     inline for (packed_bytes, 0..) |b, i| {
         const lo: u4 = @intCast(b & 0b1111);
         const hi: u4 = @intCast(b >> 4);
-        res[2 * i + 0] = e2m1_table[lo];
-        res[2 * i + 1] = e2m1_table[hi];
+        res[2 * i + 0] = table[lo];
+        res[2 * i + 1] = table[hi];
     }
     return res;
 }
 
 fn e2m1RangeTbl(
+    comptime ty: type,
+    comptime n: comptime_int,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, ty) {
+    return switch (ty) {
+        inline f32 => e2m1RangeTblF32(n, packed_bytes),
+        inline f16 => @panic("TODO: f16 support"),
+        inline bf16 => @panic("TODO: bf16 support"),
+        else => @compileError(
+            "Expected type to be f32, f16 or bf16, but got " ++
+                @typeName(ty),
+        ),
+    };
+}
+
+fn e2m1RangeTblF32(
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
 ) @Vector(n * 2, f32) {
@@ -270,14 +333,15 @@ fn e2m1RangeTbl(
 }
 
 fn e2m1Range(
+    comptime ty: type,
     comptime n: comptime_int,
     algo: e2m1Alg,
     packed_bytes: *const [n]u8,
 ) @Vector(n * 2, f32) {
     return switch (algo) {
-        .bits => e2m1RangeBits(n, packed_bytes),
-        .look_up_table => e2m1RangeLookUpTable(n, packed_bytes),
-        .tbl => e2m1RangeTbl(n, packed_bytes),
+        .bits => e2m1RangeBits(ty, n, packed_bytes),
+        .look_up_table => e2m1RangeLookUpTable(ty, n, packed_bytes),
+        .tbl => e2m1RangeTbl(ty, n, packed_bytes),
     };
 }
 
@@ -285,8 +349,8 @@ test "e2m1 tbl" {
     var values: [128]u8 = undefined;
     // even bytes then odd bytes: covers every lo and hi nibble
     for (&values, 0..) |*v, i| v.* = @intCast(i * 2 + (i >> 6));
-    const res: [256]f32 = e2m1Range(128, .tbl, &values);
-    const expected: [256]f32 = e2m1Range(128, .look_up_table, &values);
+    const res: [256]f32 = e2m1Range(f32, 128, .tbl, &values);
+    const expected: [256]f32 = e2m1Range(f32, 128, .look_up_table, &values);
     for (res, expected) |a, b| {
         try std.testing.expectEqual(
             @as(u32, @bitCast(b)),
@@ -309,7 +373,7 @@ test "e2m1 lut" {
         split[2 * i + 1] = hi;
     }
 
-    const res = e2m1Range(8, .look_up_table, &values);
+    const res = e2m1Range(f32, 8, .look_up_table, &values);
     const simd: [16]f32 = res;
     for (simd, split) |a, b| {
         const decode = decodeE2M1(b);
@@ -331,7 +395,7 @@ test "e2m1 bits" {
         split[2 * i + 1] = hi;
     }
 
-    const res = e2m1Range(8, .bits, &values);
+    const res = e2m1Range(f32, 8, .bits, &values);
     const simd: [16]f32 = res;
     for (simd, split) |a, b| {
         const decode = decodeE2M1(b);
@@ -449,7 +513,7 @@ inline fn dequantBlocks(
     inv_global: f32,
     out: *align(1) [B * 16]f32,
 ) void {
-    const dequantized = e2m1Range(B * 8, config.e2m1, packed_bytes);
+    const dequantized = e2m1Range(f32, B * 8, config.e2m1, packed_bytes);
     const scale_vector = e4m3Range(B, config.e4m3, scales, inv_global);
     const broadcasted = broadcast(B, 16, f32, scale_vector);
     const res = dequantized * broadcasted;
