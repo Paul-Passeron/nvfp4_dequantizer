@@ -40,7 +40,8 @@ const Layout = struct {
         const nvfp4s = try nvfp4.getAllNVFP4Tensors(allocator, r);
         defer allocator.free(nvfp4s);
 
-        var tensors: std.AutoHashMap(*const st.Tensor, void) = .init(allocator);
+        const TMap = std.AutoHashMap(*const st.Tensor, void);
+        var tensors: TMap = .init(allocator);
         defer tensors.deinit();
 
         var total_byte_len: usize = 0;
@@ -88,7 +89,10 @@ const Layout = struct {
                 else => "",
             } });
             try w.print("\"dtype\":\"{s}\",", .{e.dtype().str()});
-            try w.print("\"data_offsets\":[{}, {}],", .{ offset, offset + e.byteLen() });
+            try w.print("\"data_offsets\":[{}, {}],", .{
+                offset,
+                offset + e.byteLen(),
+            });
             try w.print("\"shape\":[", .{});
             var shape_buffer: [2]u64 = undefined;
             const shape: []const u64 =
@@ -114,15 +118,18 @@ const Layout = struct {
         try w.print("}}", .{});
     }
 
-    fn writeHeader(self: *const Layout, f_writer: *std.Io.File.Writer) !u64 {
+    fn writeHeader(
+        self: *const Layout,
+        f_writer: *std.Io.File.Writer,
+    ) !u64 {
         var fw = &f_writer.interface;
         // Placeholder header size
         _ = try fw.writeInt(u64, 0, .little);
         try self.writeJSONHeader(fw);
 
         const json_bytes: u64 = f_writer.logicalPos() - 8;
-        const padding: usize =
-            @intCast(std.mem.alignForward(u64, json_bytes, 8) - json_bytes);
+        const aligned = std.mem.alignForward(u64, json_bytes, 8);
+        const padding: usize = @intCast(aligned - json_bytes);
         try fw.splatByteAll(' ', padding);
 
         const header_bytes: u64 = json_bytes + padding;
@@ -137,7 +144,10 @@ const Layout = struct {
         out_file: *const std.Io.File,
         global_offset: u64,
     ) ![]job.Job {
-        var jobs: []job.Job = try allocator.alloc(job.Job, self.entries.len);
+        var jobs: []job.Job = try allocator.alloc(
+            job.Job,
+            self.entries.len,
+        );
 
         for (self.entries, 0..) |e, i| {
             jobs[i] = .{ .tensor = e, .dest = .{ .file = .{
@@ -180,10 +190,14 @@ pub fn main(init: std.process.Init) !void {
     const clock = std.Io.Clock.awake;
     const start_time = clock.now(io);
 
-    const opts = Options.fromArgs(args) orelse return error.CouldntParseArgs;
+    const opts = Options.fromArgs(args) orelse
+        return error.CouldntParseArgs;
 
     var r = st.Registry.fromPath(allocator, io, opts.in) catch |e|
-        fail(err, "could not load safetensors file at `{s}`: {}", .{ opts.in, e });
+        fail(err, "could not load safetensors file at `{s}`: {}", .{
+            opts.in,
+            e,
+        });
     defer r.deinit();
 
     var layout = try Layout.fromRegistry(allocator, &r);
@@ -221,8 +235,15 @@ pub fn main(init: std.process.Init) !void {
     try out.flush();
 }
 
-fn fail(err: *std.Io.Writer, comptime fmt: []const u8, args: anytype) noreturn {
-    err.print("error: " ++ fmt ++ "\n" ++ usage ++ "\n", args) catch {};
+fn fail(
+    err: *std.Io.Writer,
+    comptime fmt: []const u8,
+    args: anytype,
+) noreturn {
+    err.print(
+        "error: " ++ fmt ++ "\n" ++ usage ++ "\n",
+        args,
+    ) catch {};
     err.flush() catch {};
     std.process.exit(2);
 }

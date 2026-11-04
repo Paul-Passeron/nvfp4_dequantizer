@@ -53,7 +53,10 @@ fn getAllNVFP4Jobs(
     defer a.free(tensors);
 
     for (tensors) |t| {
-        try jobs.append(a, .{ .dest = .discard, .tensor = .{ .nvfp4 = t } });
+        try jobs.append(a, .{
+            .dest = .discard,
+            .tensor = .{ .nvfp4 = t },
+        });
     }
 
     return try jobs.toOwnedSlice(a);
@@ -175,7 +178,9 @@ fn loadTensorBytes(
     tensor: *const st.Tensor,
 ) ![]u8 {
     var file_buffer: [32 * 1024]u8 = undefined;
-    var reader: st.TensorReader = try .init(io, tensor, .{ .file = &file_buffer });
+    var reader: st.TensorReader = try .init(io, tensor, .{
+        .file = &file_buffer,
+    });
     defer reader.deinit();
 
     const bytes = try a.alloc(u8, @intCast(tensor.byte_len));
@@ -194,16 +199,23 @@ fn loadKernelInputs(
     var inputs = std.ArrayList(KernelInput).empty;
     var it = reg.iterator();
     while (it.next()) |t| {
-        if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
-            const base = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
-            const val = try nvfp4.Tensor.fromRegistry(&reg, base) orelse
-                return error.MissingTensor;
-            try inputs.append(a, .{
-                .packed_bytes = try loadTensorBytes(a, io, val.weight_packed),
-                .scales = try loadTensorBytes(a, io, val.weight_scale),
-                .inv_global = 1.0 / try val.weight_global_scale.readScalar(io, f32),
-            });
-        }
+        if (!std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed"))
+            continue;
+        const base = std.mem.cutSuffix(
+            u8,
+            t.key_ptr.*,
+            ".weight_packed",
+        ) orelse unreachable;
+        const val = try nvfp4.Tensor.fromRegistry(&reg, base) orelse
+            return error.MissingTensor;
+        const global = try val.weight_global_scale.readScalar(io, f32);
+        const bytes = try loadTensorBytes(a, io, val.weight_packed);
+        const scales = try loadTensorBytes(a, io, val.weight_scale);
+        try inputs.append(a, .{
+            .packed_bytes = bytes,
+            .scales = scales,
+            .inv_global = 1.0 / global,
+        });
     }
     return inputs.toOwnedSlice(a);
 }
@@ -261,7 +273,10 @@ test "all benchmarks work with all configs" {
     defer freeJobs(a, jobs);
     for ([_]nvfp4.DequantAlgo{ .sequential, .simd }) |ord| {
         for ([_]nvfp4.e2m1Alg{ .bits, .look_up_table, .tbl }) |alg| {
-            const config: nvfp4.DequantConfig = .{ .ordering = ord, .e2m1 = alg };
+            const config: nvfp4.DequantConfig = .{
+                .ordering = ord,
+                .e2m1 = alg,
+            };
             _ = try benchmark(a, io, filename, config);
             _ = try benchmarkJobs(io, jobs, config);
             _ = try benchmarkJobsSequentially(io, jobs, config);
@@ -314,7 +329,11 @@ const Benchmark = union(enum) {
             .kernel => |info| {
                 var arena: std.heap.ArenaAllocator = .init(a);
                 defer arena.deinit();
-                const inputs = try loadKernelInputs(arena.allocator(), io, filename);
+                const inputs = try loadKernelInputs(
+                    arena.allocator(),
+                    io,
+                    filename,
+                );
                 return try kernelBenchmark(io, inputs, config, info.out);
             },
             .regular => return try benchmark(a, io, filename, config),
@@ -365,7 +384,10 @@ pub fn main() !void {
         for (benchmarks) |b| {
             for (ords) |ord| {
                 for (algs) |alg| {
-                    _ = try b.run(.{ .ordering = ord, .e2m1 = alg }, a, io, filename);
+                    _ = try b.run(.{
+                        .ordering = ord,
+                        .e2m1 = alg,
+                    }, a, io, filename);
                 }
             }
         }
@@ -379,10 +401,15 @@ pub fn main() !void {
     for (benchmarks) |b| {
         for (ords) |ord| {
             for (algs) |alg| {
-                const config: nvfp4.DequantConfig = .{ .ordering = ord, .e2m1 = alg };
+                const config: nvfp4.DequantConfig = .{
+                    .ordering = ord,
+                    .e2m1 = alg,
+                };
                 print("Config = {}\n", .{config});
                 const res = try runBenchmark(b, config, a, io, filename);
-                if (first or res.duration.toMilliseconds() < min_res.duration.toMilliseconds()) {
+                const r = res.duration.toMilliseconds();
+                const rm = min_res.duration.toMilliseconds();
+                if (first or r < rm) {
                     min_b = b;
                     min_config = config;
                     min_res = res;

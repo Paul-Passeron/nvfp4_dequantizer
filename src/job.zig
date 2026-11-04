@@ -26,7 +26,11 @@ pub const Entry = union(enum) {
 
     pub fn name(self: *const Entry) []const u8 {
         return switch (self.*) {
-            .nvfp4 => |t| std.mem.cutSuffix(u8, t.weight_packed.name, ".weight_packed").?,
+            .nvfp4 => |t| std.mem.cutSuffix(
+                u8,
+                t.weight_packed.name,
+                ".weight_packed",
+            ).?,
             .regular => |t| t.name,
         };
     }
@@ -53,14 +57,22 @@ pub const Job = struct {
         };
     }
 
-    pub fn runImpl(self: *Job, io: std.Io, config: nvfp4.DequantConfig) !void {
+    pub fn runImpl(
+        self: *Job,
+        io: std.Io,
+        config: nvfp4.DequantConfig,
+    ) !void {
         switch (self.tensor) {
             .regular => |t| try self.runRegular(t, io),
             .nvfp4 => |t| try self.runNVFP4(t, io, config),
         }
     }
 
-    inline fn readIntoDest(io: std.Io, reader: *std.Io.Reader, dest: Destination) !void {
+    inline fn readIntoDest(
+        io: std.Io,
+        reader: *std.Io.Reader,
+        dest: Destination,
+    ) !void {
         switch (dest) {
             .mem => |buffer| {
                 var w = std.Io.Writer.fixed(buffer);
@@ -96,7 +108,12 @@ pub const Job = struct {
         try readIntoDest(io, &reader.interface, self.dest);
     }
 
-    pub fn runNVFP4(self: *Job, t: nvfp4.Tensor, io: std.Io, config: nvfp4.DequantConfig) !void {
+    pub fn runNVFP4(
+        self: *Job,
+        t: nvfp4.Tensor,
+        io: std.Io,
+        config: nvfp4.DequantConfig,
+    ) !void {
         var packed_buffer: [32 * 1024]u8 = undefined;
         var scale_buffer: [32 * 1024]u8 = undefined;
 
@@ -109,7 +126,11 @@ pub const Job = struct {
     }
 };
 
-pub fn runAllJobs(io: std.Io, config: nvfp4.DequantConfig, jobs: []Job) !void {
+pub fn runAllJobs(
+    io: std.Io,
+    config: nvfp4.DequantConfig,
+    jobs: []Job,
+) !void {
     var group: std.Io.Group = .init;
     for (jobs) |*job|
         group.async(io, Job.run, .{ job, io, config });

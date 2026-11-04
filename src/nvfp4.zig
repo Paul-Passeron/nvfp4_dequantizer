@@ -2,29 +2,7 @@ const std = @import("std");
 const st = @import("st");
 const builtin = @import("builtin");
 
-// Found the original NVIDIA paper at: <https://arxiv.org/pdf/2509.25149>
-
-// From <https://docs.nvidia.com/deeplearning/transformer-engine-releases/release-2.14/user-guide/features/low_precision_training/nvfp4/nvfp4.html>:
-// The representation of an NVFP4 tensor element x is given by:
-// `x = x_e2m1 * s_block * s_global`
-// where
-//
-// `x_e2m1` is the 4-bit value,
-// `s_block` is a local FP8 E4M3 scaling factor shared by a block of 16 consecutive elements,
-// `s_global` is a global FP32 scaling factor applied to the entire tensor.
-
-// Representations:
-// - NVFP4:
-//      1 sign bit
-//      2 exponent bits
-//      1 mantissa bit
-//
-// - FP8 E4M3:
-//      1 sign bit
-//      4 exponent bits
-//      3 mantissa bits
-
-fn E2M1_from_parts(
+fn E2M1FromParts(
     sign: u16,
     e: u16,
     m: u16,
@@ -42,7 +20,7 @@ fn decodeE2M1Impl(x: u4) f32 {
     const sign: u16 = @as(u16, x >> 3) << 15;
     const e: u16 = (x >> 1) & 0b11;
     const m: u16 = x & 0b1;
-    const bits = E2M1_from_parts(sign, e, m);
+    const bits = E2M1FromParts(sign, e, m);
     return @as(f32, @as(f16, @bitCast(bits)));
 }
 
@@ -61,8 +39,14 @@ pub inline fn decodeE2M1(nibble: u4) f32 {
 }
 
 test "decodeE2M1 covers all 16 values" {
-    const expected = [16]f32{ 0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6 };
-    for (expected, 0..) |e, i| try std.testing.expectEqual(e, decodeE2M1(@intCast(i)));
+    const expected = [16]f32{
+        0,    0.5,  1,  1.5,
+        2,    3,    4,  6,
+        -0.0, -0.5, -1, -1.5,
+        -2,   -3,   -4, -6,
+    };
+    for (expected, 0..) |e, i|
+        try std.testing.expectEqual(e, decodeE2M1(@intCast(i)));
 }
 
 fn E4M3FromParts(sign: u16, e: u16, m: u16) u16 {
@@ -153,7 +137,10 @@ fn e2m1ByteTable(comptime shift: u5) @Vector(16, u8) {
 const e2m1_byte3_table = e2m1ByteTable(24);
 const e2m1_byte2_table = e2m1ByteTable(16);
 
-inline fn tblAsmImpl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
+inline fn tblAsmImpl(
+    table: @Vector(16, u8),
+    idx: @Vector(16, u8),
+) @Vector(16, u8) {
     return asm ("tbl %[out].16b, {%[t].16b}, %[i].16b"
         : [out] "=w" (-> @Vector(16, u8)),
         : [t] "w" (table),
@@ -161,14 +148,20 @@ inline fn tblAsmImpl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u
     );
 }
 
-inline fn tblGeneralImpl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
+inline fn tblGeneralImpl(
+    table: @Vector(16, u8),
+    idx: @Vector(16, u8),
+) @Vector(16, u8) {
     var res: [16]u8 = undefined;
     inline for (0..16) |i| res[i] = table[idx[i]];
     return res;
 }
 
 // From <https://ziggit.dev/t/simd-and-lookup-tables/15852/4>
-inline fn tbl(table: @Vector(16, u8), idx: @Vector(16, u8)) @Vector(16, u8) {
+inline fn tbl(
+    table: @Vector(16, u8),
+    idx: @Vector(16, u8),
+) @Vector(16, u8) {
     if (builtin.cpu.arch == .aarch64) {
         return tblAsmImpl(table, idx);
     } else {
@@ -200,52 +193,74 @@ inline fn decodeE2M1FromIndices(idx: @Vector(16, u8)) @Vector(16, u32) {
     return (@as(@Vector(16, u32), hi16) << @splat(16));
 }
 
+fn e2m1RangeBits(
+    comptime n: comptime_int,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, f32) {
+    const V = @Vector(n * 2, u8);
+    const W = @Vector(n * 2, u32);
+    const bytes: @Vector(n, u8) = packed_bytes.*;
+    const v: V = splitBytesIntoNibbles(n, bytes);
+    const s: V = (v >> @splat(3)) & @as(V, @splat(1));
+    const e = (v >> @splat(1)) & @as(V, @splat(3));
+    const m = v & @as(V, @splat(1));
+    const zero: V = @splat(0);
+    const is_sub = e == zero;
+    const exp = @select(
+        u8,
+        is_sub,
+        m * @as(V, @splat(126)),
+        e + @as(V, @splat(126)),
+    );
+    const mant = @select(u8, is_sub, zero, m);
+    const byte3 = (s << @splat(7)) | (exp >> @splat(1));
+    const byte2 = ((exp & @as(V, @splat(1))) << @splat(7)) |
+        (mant << @splat(6));
+    const bits = (@as(W, byte3) << @splat(24)) |
+        (@as(W, byte2) << @splat(16));
+    return @bitCast(bits);
+}
+
+fn e2m1RangeLookUpTable(
+    comptime n: comptime_int,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, f32) {
+    var res: [n * 2]f32 = undefined;
+    inline for (packed_bytes, 0..) |b, i| {
+        const lo: u4 = @intCast(b & 0b1111);
+        const hi: u4 = @intCast(b >> 4);
+        res[2 * i + 0] = e2m1_table[lo];
+        res[2 * i + 1] = e2m1_table[hi];
+    }
+    return res;
+}
+
+fn e2m1RangeTbl(
+    comptime n: comptime_int,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, f32) {
+    comptime std.debug.assert(n * 2 % 16 == 0);
+    const bytes: @Vector(n, u8) = packed_bytes.*;
+    const nibbles: [n * 2]u8 = splitBytesIntoNibbles(n, bytes);
+    var res: [n * 2]u32 = undefined;
+    inline for (0..n * 2 / 16) |k| {
+        const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
+        res[k * 16 ..][0..16].* = decodeE2M1FromIndices(idx);
+    }
+    const bits: @Vector(n * 2, u32) = res;
+    return @bitCast(bits);
+}
+
 fn e2m1Range(
     comptime n: comptime_int,
     algo: e2m1Alg,
     packed_bytes: *const [n]u8,
 ) @Vector(n * 2, f32) {
-    switch (algo) {
-        .bits => {
-            const V = @Vector(n * 2, u8);
-            const W = @Vector(n * 2, u32);
-            const bytes: @Vector(n, u8) = packed_bytes.*;
-            const v: V = splitBytesIntoNibbles(n, bytes);
-            const s: V = (v >> @splat(3)) & @as(V, @splat(1));
-            const e = (v >> @splat(1)) & @as(V, @splat(3));
-            const m = v & @as(V, @splat(1));
-            const zero: V = @splat(0);
-            const is_sub = e == zero;
-            const exp = @select(u8, is_sub, m * @as(V, @splat(126)), e + @as(V, @splat(126)));
-            const mant = @select(u8, is_sub, zero, m);
-            const byte3 = (s << @splat(7)) | (exp >> @splat(1));
-            const byte2 = ((exp & @as(V, @splat(1))) << @splat(7)) | (mant << @splat(6));
-            const bits = (@as(W, byte3) << @splat(24)) | (@as(W, byte2) << @splat(16));
-            return @bitCast(bits);
-        },
-        .look_up_table => {
-            var res: [n * 2]f32 = undefined;
-            inline for (packed_bytes, 0..) |b, i| {
-                const lo: u4 = @intCast(b & 0b1111);
-                const hi: u4 = @intCast(b >> 4);
-                res[2 * i + 0] = e2m1_table[lo];
-                res[2 * i + 1] = e2m1_table[hi];
-            }
-            return res;
-        },
-        .tbl => {
-            comptime std.debug.assert(n * 2 % 16 == 0);
-            const bytes: @Vector(n, u8) = packed_bytes.*;
-            const nibbles: [n * 2]u8 = splitBytesIntoNibbles(n, bytes);
-            var res: [n * 2]u32 = undefined;
-            inline for (0..n * 2 / 16) |k| {
-                const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
-                res[k * 16 ..][0..16].* = decodeE2M1FromIndices(idx);
-            }
-            const bits: @Vector(n * 2, u32) = res;
-            return @bitCast(bits);
-        },
-    }
+    return switch (algo) {
+        .bits => e2m1RangeBits(n, packed_bytes),
+        .look_up_table => e2m1RangeLookUpTable(n, packed_bytes),
+        .tbl => e2m1RangeTbl(n, packed_bytes),
+    };
 }
 
 test "e2m1 tbl" {
@@ -255,12 +270,20 @@ test "e2m1 tbl" {
     const res: [256]f32 = e2m1Range(128, .tbl, &values);
     const expected: [256]f32 = e2m1Range(128, .look_up_table, &values);
     for (res, expected) |a, b| {
-        try std.testing.expectEqual(@as(u32, @bitCast(b)), @as(u32, @bitCast(a)));
+        try std.testing.expectEqual(
+            @as(u32, @bitCast(b)),
+            @as(u32, @bitCast(a)),
+        );
     }
 }
 
 test "e2m1 lut" {
-    const values: [8]u8 = .{ 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90 };
+    const values: [8]u8 = .{
+        0xab, 0xcd,
+        0xef, 0x12,
+        0x34, 0x56,
+        0x78, 0x90,
+    };
     var split: [16]u4 = undefined;
     for (values, 0..) |v, i| {
         const lo, const hi = unpack(v);
@@ -277,7 +300,12 @@ test "e2m1 lut" {
 }
 
 test "e2m1 bits" {
-    const values: [8]u8 = .{ 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90 };
+    const values: [8]u8 = .{
+        0xab, 0xcd,
+        0xef, 0x12,
+        0x34, 0x56,
+        0x78, 0x90,
+    };
     var split: [16]u4 = undefined;
     for (values, 0..) |v, i| {
         const lo, const hi = unpack(v);
@@ -313,10 +341,25 @@ fn e4m3RangeImpl(
     const p: S = @intCast(splat(V, 31) - @clz(m | splat(V, 1)));
     const subnormal: V = ((splat(V, 118) + @as(V, p)) << splat(S, 23)) |
         (((m << (splat(S, 3) - p)) & splat(V, 0x7)) << splat(S, 20));
-    const subnormal_or_zero: V = @select(u32, m == splat(V, 0), splat(V, 0), subnormal);
-    const magnitude: V = @select(u32, e == splat(V, 0), subnormal_or_zero, normal);
+    const subnormal_or_zero: V = @select(
+        u32,
+        m == splat(V, 0),
+        splat(V, 0),
+        subnormal,
+    );
+    const magnitude: V = @select(
+        u32,
+        e == splat(V, 0),
+        subnormal_or_zero,
+        normal,
+    );
     const is_nan: B = (e == splat(V, 0xF)) & (m == splat(V, 0x7));
-    const or_mask = @select(u32, is_nan, splat(V, 0x7FC0_0000), magnitude);
+    const or_mask = @select(
+        u32,
+        is_nan,
+        splat(V, 0x7FC0_0000),
+        magnitude,
+    );
     const res: V = sign | or_mask;
     return @bitCast(res);
 }
@@ -327,11 +370,17 @@ test "decoding e4m3 works" {
         const simd: [1]f32 = e4m3RangeImpl(1, &.{val});
         const expected: u32 = @bitCast(decodeE4M3(val));
 
-        try std.testing.expectEqual(@as(u32, @bitCast(simd[0])), expected);
+        try std.testing.expectEqual(
+            @as(u32, @bitCast(simd[0])),
+            expected,
+        );
     }
 }
 
-fn shuffleMask(comptime n: comptime_int, comptime m: comptime_int) [n * m]i32 {
+fn shuffleMask(
+    comptime n: comptime_int,
+    comptime m: comptime_int,
+) [n * m]i32 {
     var indices: [n * m]i32 = undefined;
     for (&indices, 0..) |*index, i| index.* = @intCast(i / m);
     return indices;
@@ -392,16 +441,14 @@ const lengths_size: comptime_int = blk: {
     break :blk @intCast(pot);
 };
 
-fn computeVecLengths() [lengths_size]u32 {
+const vec_lengths: [lengths_size]u32 = blk: {
     var res: [lengths_size]u32 = undefined;
     for (0..lengths_size) |i| {
         const p: i32 = lengths_size - i - 1;
         res[i] = @intCast(std.math.powi(i32, 2, p) catch unreachable);
     }
-    return res;
-}
-
-const vec_lengths: [lengths_size]u32 = computeVecLengths();
+    break :blk res;
+};
 
 noinline fn dequantRangeSimd(
     algo: e2m1Alg,
@@ -458,7 +505,13 @@ pub fn dequantRange(
             }
         },
         .simd => {
-            dequantRangeSimd(config.e2m1, packed_bytes, scales, inv_global, out);
+            dequantRangeSimd(
+                config.e2m1,
+                packed_bytes,
+                scales,
+                inv_global,
+                out,
+            );
         },
     }
 }
@@ -477,7 +530,8 @@ pub const Tensor = struct {
         const weight_packed_name =
             try a.print("{s}." ++ end, .{base});
         defer a.free(weight_packed_name);
-        const weight_packed = registry.get(weight_packed_name) orelse
+        const weight_packed =
+            registry.get(weight_packed_name) orelse
             return error.MissingTensorInfo;
         return weight_packed;
     }
@@ -501,11 +555,21 @@ pub const Tensor = struct {
 
         scratch.reset();
         const weight_scale =
-            try getTensorFromRegistry(a, registry, base, "weight_scale");
+            try getTensorFromRegistry(
+                a,
+                registry,
+                base,
+                "weight_scale",
+            );
 
         scratch.reset();
         const weight_global_scale =
-            try getTensorFromRegistry(a, registry, base, "weight_global_scale");
+            try getTensorFromRegistry(
+                a,
+                registry,
+                base,
+                "weight_global_scale",
+            );
 
         return .{
             .weight_packed = weight_packed,
@@ -590,12 +654,15 @@ pub const TensorReader = struct {
         // Handle last block if it still hasn't been completely read
         const pending_bytes: []u8 = std.mem.asBytes(&self.pending);
         if (self.pending_index < pending_bytes.len) {
-            const n = try io_writer.write(limit.slice(pending_bytes[self.pending_index..]));
+            const n = try io_writer.write(
+                limit.slice(pending_bytes[self.pending_index..]),
+            );
             self.pending_index += n;
             return n;
         }
 
-        // No pending block so if no remaining blocks then we truly are at the end
+        // No pending block so if no remaining blocks then we
+        // truly are at the end
         if (self.remaining_blocks == 0) {
             return error.EndOfStream;
         }
@@ -607,7 +674,12 @@ pub const TensorReader = struct {
             const input = try self.readInputs(PACKED_PER_BLOCK, 1);
             const packed_bytes = input.bytes[0..PACKED_PER_BLOCK];
             const scale = input.scales[0];
-            dequantBlock(packed_bytes, scale, self.inv_global, &self.pending);
+            dequantBlock(
+                packed_bytes,
+                scale,
+                self.inv_global,
+                &self.pending,
+            );
             self.remaining_blocks -= 1;
             const n = try io_writer.write(limit.slice(pending_bytes));
             self.pending_index = n;
@@ -627,7 +699,8 @@ pub const TensorReader = struct {
         // so n <= dest.len
 
         const input = try self.readInputs(k * PACKED_PER_BLOCK, k);
-        const dest_f32: []align(1) f32 = std.mem.bytesAsSlice(f32, dest[0..n]);
+        const dest_f32: []align(1) f32 =
+            std.mem.bytesAsSlice(f32, dest[0..n]);
         dequantRange(
             self.config,
             input.bytes,
@@ -691,19 +764,24 @@ pub const TensorReader = struct {
             .{ .file = buffers.scales },
         );
         errdefer scale_reader.deinit();
-        const inv_global = 1.0 / try tensor.weight_global_scale.readScalar(io, f32);
+        const global = try tensor
+            .weight_global_scale
+            .readScalar(io, f32);
 
         const remaining_blocks = tensor.weight_scale.byte_len;
         return .{
             .packed_reader = packed_reader,
             .scale_reader = scale_reader,
-            .inv_global = inv_global,
+            .inv_global = 1.0 / global,
             .remaining_blocks = remaining_blocks,
             .interface = initInterface(buffers.interface),
             .config = config,
         };
     }
 };
+
+const nvfp4_filename = "nvfp4/model.safetensors";
+const f32_filename = "converted_f32/model-00001-of-00001.safetensors";
 
 test "nvfp4 and f32 are the same sequential" {
     const a = std.testing.allocator;
@@ -712,13 +790,11 @@ test "nvfp4 and f32 are the same sequential" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var nvfp4_reg: st.Registry = try .fromPath(a, io, "nvfp4/model.safetensors");
+    var nvfp4_reg: st.Registry =
+        try .fromPath(a, io, nvfp4_filename);
     defer nvfp4_reg.deinit();
-    var f32_reg: st.Registry = try .fromPath(
-        a,
-        io,
-        "converted_f32/model-00001-of-00001.safetensors",
-    );
+    var f32_reg: st.Registry =
+        try .fromPath(a, io, f32_filename);
     defer f32_reg.deinit();
 
     const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
@@ -753,8 +829,10 @@ test "nvfp4 and f32 are the same sequential" {
         try actual_reader.interface.readSliceAll(actual_chunk[0..n]);
         try expected_reader.interface.readSliceAll(expected_chunk[0..n]);
 
-        const actual_values: []f32 = std.mem.bytesAsSlice(f32, actual_chunk[0..n]);
-        const expected_values: []f32 = std.mem.bytesAsSlice(f32, expected_chunk[0..n]);
+        const actual_values: []f32 =
+            std.mem.bytesAsSlice(f32, actual_chunk[0..n]);
+        const expected_values: []f32 =
+            std.mem.bytesAsSlice(f32, expected_chunk[0..n]);
         for (expected_values, actual_values) |e, v| {
             try std.testing.expectApproxEqRel(e, v, 1e-3);
         }
@@ -774,13 +852,10 @@ test "nvfp4 and f32 are the same simd" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var nvfp4_reg: st.Registry = try .fromPath(a, io, "nvfp4/model.safetensors");
+    var nvfp4_reg: st.Registry =
+        try .fromPath(a, io, nvfp4_filename);
     defer nvfp4_reg.deinit();
-    var f32_reg: st.Registry = try .fromPath(
-        a,
-        io,
-        "converted_f32/model-00001-of-00001.safetensors",
-    );
+    var f32_reg: st.Registry = try .fromPath(a, io, f32_filename);
     defer f32_reg.deinit();
 
     const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
@@ -815,8 +890,10 @@ test "nvfp4 and f32 are the same simd" {
         try actual_reader.interface.readSliceAll(actual_chunk[0..n]);
         try expected_reader.interface.readSliceAll(expected_chunk[0..n]);
 
-        const actual_values: []f32 = std.mem.bytesAsSlice(f32, actual_chunk[0..n]);
-        const expected_values: []f32 = std.mem.bytesAsSlice(f32, expected_chunk[0..n]);
+        const actual_values: []f32 =
+            std.mem.bytesAsSlice(f32, actual_chunk[0..n]);
+        const expected_values: []f32 =
+            std.mem.bytesAsSlice(f32, expected_chunk[0..n]);
         for (expected_values, actual_values) |e, v| {
             try std.testing.expectApproxEqRel(e, v, 1e-3);
         }
@@ -836,7 +913,7 @@ test "nvfp4 is the same for sequential and simd" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var nvfp4_reg: st.Registry = try .fromPath(a, io, "nvfp4/model.safetensors");
+    var nvfp4_reg: st.Registry = try .fromPath(a, io, nvfp4_filename);
     defer nvfp4_reg.deinit();
 
     const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
@@ -867,8 +944,10 @@ test "nvfp4 is the same for sequential and simd" {
         try actual_reader.interface.readSliceAll(actual_chunk[0..n]);
         try expected_reader.interface.readSliceAll(expected_chunk[0..n]);
 
-        const actual_values: []f32 = std.mem.bytesAsSlice(f32, actual_chunk[0..n]);
-        const expected_values: []f32 = std.mem.bytesAsSlice(f32, expected_chunk[0..n]);
+        const actual_values: []f32 =
+            std.mem.bytesAsSlice(f32, actual_chunk[0..n]);
+        const expected_values: []f32 =
+            std.mem.bytesAsSlice(f32, expected_chunk[0..n]);
         for (expected_values, actual_values) |e, v| {
             try std.testing.expectApproxEqRel(e, v, 1e-6);
         }
@@ -892,13 +971,9 @@ test "nvfp4 reader through a small interface buffer sequential" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var nvfp4_reg: st.Registry = try .fromPath(a, io, "nvfp4/model.safetensors");
+    var nvfp4_reg: st.Registry = try .fromPath(a, io, nvfp4_filename);
     defer nvfp4_reg.deinit();
-    var f32_reg: st.Registry = try .fromPath(
-        a,
-        io,
-        "converted_f32/model-00001-of-00001.safetensors",
-    );
+    var f32_reg: st.Registry = try .fromPath(a, io, f32_filename);
     defer f32_reg.deinit();
 
     const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
@@ -926,8 +1001,12 @@ test "nvfp4 reader through a small interface buffer sequential" {
 
     const value_count = 1000;
     for (0..value_count) |_| {
-        const e: f32 = @bitCast(try expected_reader.interface.takeInt(u32, .little));
-        const v: f32 = @bitCast(try actual_reader.interface.takeInt(u32, .little));
+        const e: f32 = @bitCast(
+            try expected_reader.interface.takeInt(u32, .little),
+        );
+        const v: f32 = @bitCast(
+            try actual_reader.interface.takeInt(u32, .little),
+        );
         try std.testing.expectApproxEqRel(e, v, 1e-3);
     }
 
@@ -936,8 +1015,10 @@ test "nvfp4 reader through a small interface buffer sequential" {
     try actual_reader.interface.readSliceAll(&actual_chunk);
     try expected_reader.interface.readSliceAll(&expected_chunk);
 
-    const actual_values: []f32 = std.mem.bytesAsSlice(f32, &actual_chunk);
-    const expected_values: []f32 = std.mem.bytesAsSlice(f32, &expected_chunk);
+    const actual_values: []f32 =
+        std.mem.bytesAsSlice(f32, &actual_chunk);
+    const expected_values: []f32 =
+        std.mem.bytesAsSlice(f32, &expected_chunk);
     for (expected_values, actual_values) |e, v| {
         try std.testing.expectApproxEqRel(e, v, 1e-3);
     }
@@ -950,13 +1031,9 @@ test "nvfp4 reader through a small interface buffer simd" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var nvfp4_reg: st.Registry = try .fromPath(a, io, "nvfp4/model.safetensors");
+    var nvfp4_reg: st.Registry = try .fromPath(a, io, nvfp4_filename);
     defer nvfp4_reg.deinit();
-    var f32_reg: st.Registry = try .fromPath(
-        a,
-        io,
-        "converted_f32/model-00001-of-00001.safetensors",
-    );
+    var f32_reg: st.Registry = try .fromPath(a, io, f32_filename);
     defer f32_reg.deinit();
 
     const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
@@ -984,8 +1061,12 @@ test "nvfp4 reader through a small interface buffer simd" {
 
     const value_count = 1000;
     for (0..value_count) |_| {
-        const e: f32 = @bitCast(try expected_reader.interface.takeInt(u32, .little));
-        const v: f32 = @bitCast(try actual_reader.interface.takeInt(u32, .little));
+        const e: f32 = @bitCast(
+            try expected_reader.interface.takeInt(u32, .little),
+        );
+        const v: f32 = @bitCast(
+            try actual_reader.interface.takeInt(u32, .little),
+        );
         try std.testing.expectApproxEqRel(e, v, 1e-3);
     }
 
@@ -994,8 +1075,10 @@ test "nvfp4 reader through a small interface buffer simd" {
     try actual_reader.interface.readSliceAll(&actual_chunk);
     try expected_reader.interface.readSliceAll(&expected_chunk);
 
-    const actual_values: []f32 = std.mem.bytesAsSlice(f32, &actual_chunk);
-    const expected_values: []f32 = std.mem.bytesAsSlice(f32, &expected_chunk);
+    const actual_values: []f32 =
+        std.mem.bytesAsSlice(f32, &actual_chunk);
+    const expected_values: []f32 =
+        std.mem.bytesAsSlice(f32, &expected_chunk);
     for (expected_values, actual_values) |e, v| {
         try std.testing.expectApproxEqRel(e, v, 1e-3);
     }
@@ -1010,8 +1093,11 @@ pub fn getAllNVFP4Tensors(
 
     var it = r.iterator();
     while (it.next()) |t| {
-        if (std.mem.endsWith(u8, t.key_ptr.*, ".weight_packed")) {
-            const base = std.mem.cutSuffix(u8, t.key_ptr.*, ".weight_packed") orelse unreachable;
+        const suffix = ".weight_packed";
+        if (std.mem.endsWith(u8, t.key_ptr.*, suffix)) {
+            const base =
+                std.mem.cutSuffix(u8, t.key_ptr.*, suffix) orelse
+                unreachable;
             const val = try Tensor.fromRegistry(r, base) orelse
                 return error.MissingTensor;
             try tensors.append(a, val);
