@@ -82,14 +82,10 @@ fn getAllNVFP4Jobs(
 }
 
 fn freeJobs(a: std.mem.Allocator, jobs: []job.Job) void {
-    for (jobs) |j| {
-        switch (j.dest) {
-            .mem => |buffer| {
-                a.free(buffer);
-            },
-            else => {},
-        }
-    }
+    for (jobs) |j| switch (j.dest) {
+        .mem => |buffer| a.free(buffer),
+        else => {},
+    };
     a.free(jobs);
 }
 
