@@ -65,28 +65,20 @@ fn getAllNVFP4Jobs(
     a: std.mem.Allocator,
     r: *const st.Registry,
 ) ![]job.Job {
-    var jobs = std.ArrayList(job.Job).empty;
-    errdefer {
-        for (jobs.items) |j| {
-            switch (j.dest) {
-                .mem => |buffer| a.free(buffer),
-                else => {},
-            }
-        }
-        jobs.deinit(a);
-    }
-
     const tensors = try nvfp4.getAllNVFP4Tensors(a, r);
     defer a.free(tensors);
 
-    for (tensors) |t| {
-        try jobs.append(a, .{
+    var jobs = try a.alloc(job.Job, tensors.len);
+    errdefer freeJobs(a, jobs);
+
+    for (tensors, 0..) |t, i| {
+        jobs[i] = .{
             .dest = .discard,
             .tensor = .{ .nvfp4 = t },
-        });
+        };
     }
 
-    return try jobs.toOwnedSlice(a);
+    return jobs;
 }
 
 fn freeJobs(a: std.mem.Allocator, jobs: []job.Job) void {
