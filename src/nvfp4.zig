@@ -221,19 +221,45 @@ inline fn merge2U8aAsU16(
     return @bitCast(@shuffle(u8, lo, hi, interleaveMask(n)));
 }
 
-inline fn decodeE2M1FromIndices(idx: @Vector(16, u8)) @Vector(16, u32) {
-    const b3 = tbl(e2m1_byte3_table, idx);
-    const b2 = tbl(e2m1_byte2_table, idx);
-    const hi16 = merge2U8aAsU16(16, b2, b3);
-    return (@as(@Vector(16, u32), hi16) << @splat(16));
+inline fn decodeE2M1FromIndices(comptime ty: type, idx: @Vector(16, u8)) @Vector(16, u32) {
+    switch (ty) {
+        inline f32 => {
+            const b3 = tbl(e2m1_byte3_table, idx);
+            const b2 = tbl(e2m1_byte2_table, idx);
+            const hi16 = merge2U8aAsU16(16, b2, b3);
+            return (@as(@Vector(16, u32), hi16) << @splat(16));
+        },
+        inline bf16 => {
+            const b3 = tbl(e2m1_byte3_table, idx);
+            const b2 = tbl(e2m1_byte2_table, idx);
+            const hi16 = merge2U8aAsU16(16, b2, b3);
+            return @bitCast(hi16);
+        },
+        inline f16 => @panic("TODO: support f16"),
+        else => @compileError(
+            "Expected type to be f32, f16 or bf16, but got " ++
+                @typeName(ty),
+        ),
+    }
 }
 
 fn e2m1RangeBitsF32(
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
 ) @Vector(n * 2, f32) {
+    const as_bf16 = e2m1RangeBitsBF16(n, packed_bytes);
+    const widened: @Vector(n * 2, u32) = as_bf16;
+    const bits: @Vector(n * 2, u32) =
+        widened << splat(@Vector(n * 2, u5), 16);
+    return @bitCast(bits);
+}
+
+fn e2m1RangeBitsBF16(
+    comptime n: comptime_int,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, u16) {
     const V = @Vector(n * 2, u8);
-    const W = @Vector(n * 2, u32);
+    const W = @Vector(n * 2, u16);
     const bytes: @Vector(n, u8) = packed_bytes.*;
     const v: V = splitBytesIntoNibbles(n, bytes);
     const s: V = (v >> @splat(3)) & @as(V, @splat(1));
@@ -251,8 +277,8 @@ fn e2m1RangeBitsF32(
     const byte3 = (s << @splat(7)) | (exp >> @splat(1));
     const byte2 = ((exp & @as(V, @splat(1))) << @splat(7)) |
         (mant << @splat(6));
-    const bits = (@as(W, byte3) << @splat(24)) |
-        (@as(W, byte2) << @splat(16));
+    const bits = (@as(W, byte3) << @splat(8)) |
+        (@as(W, byte2));
     return @bitCast(bits);
 }
 
@@ -264,7 +290,7 @@ fn e2m1RangeBits(
     return switch (ty) {
         inline f32 => e2m1RangeBitsF32(n, packed_bytes),
         inline f16 => @panic("TODO: f16 support"),
-        inline bf16 => @panic("TODO: bf16 support"),
+        inline bf16 => e2m1RangeBitsBF16(n, packed_bytes),
         else => @compileError(
             "Expected type to be f32, f16 or bf16, but got " ++
                 @typeName(ty),
@@ -308,7 +334,7 @@ fn e2m1RangeTbl(
     return switch (ty) {
         inline f32 => e2m1RangeTblF32(n, packed_bytes),
         inline f16 => @panic("TODO: f16 support"),
-        inline bf16 => @panic("TODO: bf16 support"),
+        inline bf16 => e2m1RangeTblBF16(n, packed_bytes),
         else => @compileError(
             "Expected type to be f32, f16 or bf16, but got " ++
                 @typeName(ty),
@@ -326,9 +352,25 @@ fn e2m1RangeTblF32(
     var res: [n * 2]u32 = undefined;
     inline for (0..n * 2 / 16) |k| {
         const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
-        res[k * 16 ..][0..16].* = decodeE2M1FromIndices(idx);
+        res[k * 16 ..][0..16].* = decodeE2M1FromIndices(f32, idx);
     }
     const bits: @Vector(n * 2, u32) = res;
+    return @bitCast(bits);
+}
+
+fn e2m1RangeTblBF16(
+    comptime n: comptime_int,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, bf16) {
+    comptime std.debug.assert(n * 2 % 16 == 0);
+    const bytes: @Vector(n, u8) = packed_bytes.*;
+    const nibbles: [n * 2]u8 = splitBytesIntoNibbles(n, bytes);
+    var res: [n * 2]u32 = undefined;
+    inline for (0..n * 2 / 16) |k| {
+        const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
+        res[k * 16 ..][0..16].* = decodeE2M1FromIndices(bf16, idx);
+    }
+    const bits: @Vector(n * 2, u16) = res;
     return @bitCast(bits);
 }
 
