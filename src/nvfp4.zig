@@ -635,6 +635,7 @@ pub fn dequantRange(
 }
 
 pub const Tensor = struct {
+    output_type: st.DataType,
     weight_packed: *const st.Tensor,
     weight_scale: *const st.Tensor,
     weight_global_scale: *const st.Tensor,
@@ -656,9 +657,14 @@ pub const Tensor = struct {
 
     /// returns null when couldn't find `<base>.weight_packed` tensor
     pub fn fromRegistry(
+        dt: st.DataType,
         registry: *const st.Registry,
         base: []const u8,
-    ) error{ MissingTensorInfo, OutOfMemory }!?Tensor {
+    ) error{ MissingTensorInfo, WrongDataType, OutOfMemory }!?Tensor {
+        switch (dt) {
+            .F32, .F16, .BF16 => {},
+            else => return error.WrongDataType,
+        }
         var scratch_b: [512]u8 = undefined;
         var scratch: std.heap.FixedBufferAllocator = .init(&scratch_b);
         const a = scratch.allocator();
@@ -690,6 +696,7 @@ pub const Tensor = struct {
             );
 
         return .{
+            .output_type = dt,
             .weight_packed = weight_packed,
             .weight_scale = weight_scale,
             .weight_global_scale = weight_global_scale,
@@ -703,10 +710,7 @@ pub const Tensor = struct {
     }
 
     pub fn dequantByteLen(self: *const Tensor) u64 {
-        // 2 samples per u8 (u4 + u4)
-        // and then 32 bits per f32 sample (=4 bytes)
-        // so packed byte len * 8
-        return self.weight_packed.byte_len * 8;
+        return self.weight_packed.byte_len * 2 * self.output_type.byteCount();
     }
 
     pub fn reader(
@@ -728,7 +732,7 @@ test "can get tensor from registry" {
     const io = threaded.io();
     var reg: st.Registry = try .fromPath(a, io, filename);
     defer reg.deinit();
-    _ = try Tensor.fromRegistry(&reg, base);
+    _ = try Tensor.fromRegistry(.F32, &reg, base);
 }
 
 const BLOCK_COUNT = 16;
@@ -915,7 +919,7 @@ test "nvfp4 and f32 are the same sequential" {
         try .fromPath(a, io, f32_filename);
     defer f32_reg.deinit();
 
-    const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
+    const t = try Tensor.fromRegistry(.F32, &nvfp4_reg, base) orelse
         return error.MissingTensor;
     const expected = f32_reg.get(base ++ ".weight") orelse
         return error.MissingTensor;
@@ -976,7 +980,7 @@ test "nvfp4 and f32 are the same simd" {
     var f32_reg: st.Registry = try .fromPath(a, io, f32_filename);
     defer f32_reg.deinit();
 
-    const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
+    const t = try Tensor.fromRegistry(.F32, &nvfp4_reg, base) orelse
         return error.MissingTensor;
     const expected = f32_reg.get(base ++ ".weight") orelse
         return error.MissingTensor;
@@ -1034,7 +1038,7 @@ test "nvfp4 is the same for sequential and simd" {
     var nvfp4_reg: st.Registry = try .fromPath(a, io, nvfp4_filename);
     defer nvfp4_reg.deinit();
 
-    const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
+    const t = try Tensor.fromRegistry(.F32, &nvfp4_reg, base) orelse
         return error.MissingTensor;
 
     var packed_buffer: [4096]u8 = undefined;
@@ -1094,7 +1098,7 @@ test "nvfp4 reader through a small interface buffer sequential" {
     var f32_reg: st.Registry = try .fromPath(a, io, f32_filename);
     defer f32_reg.deinit();
 
-    const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
+    const t = try Tensor.fromRegistry(.F32, &nvfp4_reg, base) orelse
         return error.MissingTensor;
     const expected = f32_reg.get(base ++ ".weight") orelse
         return error.MissingTensor;
@@ -1154,7 +1158,7 @@ test "nvfp4 reader through a small interface buffer simd" {
     var f32_reg: st.Registry = try .fromPath(a, io, f32_filename);
     defer f32_reg.deinit();
 
-    const t = try Tensor.fromRegistry(&nvfp4_reg, base) orelse
+    const t = try Tensor.fromRegistry(.F32, &nvfp4_reg, base) orelse
         return error.MissingTensor;
     const expected = f32_reg.get(base ++ ".weight") orelse
         return error.MissingTensor;
@@ -1216,7 +1220,7 @@ pub fn getAllNVFP4Tensors(
             const base =
                 std.mem.cutSuffix(u8, t.key_ptr.*, suffix) orelse
                 unreachable;
-            const val = try Tensor.fromRegistry(r, base) orelse
+            const val = try Tensor.fromRegistry(.F32, r, base) orelse
                 return error.MissingTensor;
             try tensors.append(a, val);
         }

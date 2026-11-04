@@ -17,6 +17,26 @@ pub const DataType = enum {
     F8_E5M2,
     BOOL,
 
+    pub fn byteCount(self: DataType) usize {
+        return switch (self) {
+            .U8 => 1,
+            .U16 => 2,
+            .U32 => 3,
+            .U64 => 4,
+            .I8 => 1,
+            .I16 => 2,
+            .I32 => 3,
+            .I64 => 4,
+            .F16 => 2,
+            .F32 => 4,
+            .F64 => 4,
+            .BF16 => 2,
+            .F8_E4M3 => 1,
+            .F8_E5M2 => 1,
+            .BOOL => 1,
+        };
+    }
+
     pub fn str(self: DataType) []const u8 {
         return switch (self) {
             .U8 => "U8",

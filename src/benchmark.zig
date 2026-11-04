@@ -221,7 +221,7 @@ fn loadKernelInputs(
             t.key_ptr.*,
             ".weight_packed",
         ) orelse unreachable;
-        const val = try nvfp4.Tensor.fromRegistry(&reg, base) orelse
+        const val = try nvfp4.Tensor.fromRegistry(.F32, &reg, base) orelse
             return error.MissingTensor;
         const global = try val.weight_global_scale.readScalar(io, f32);
         const bytes = try loadTensorBytes(a, io, val.weight_packed);
