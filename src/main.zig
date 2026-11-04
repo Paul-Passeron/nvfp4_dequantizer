@@ -60,6 +60,14 @@ fn takeValue(
     return args[i + 1];
 }
 
+fn comptimeLowerCased(comptime s: []const u8) [s.len]u8 {
+    var l: [s.len]u8 = undefined;
+    for (s, &l) |c, *p| {
+        p.* = std.ascii.toLower(c);
+    }
+    return l;
+}
+
 fn parseEnumLitMayBeLowercased(comptime t: type, from: []const u8) ?t {
     const info = @typeInfo(t);
     switch (info) {
@@ -67,22 +75,13 @@ fn parseEnumLitMayBeLowercased(comptime t: type, from: []const u8) ?t {
         else => @compileError("Expected an enum type"),
     }
     const t_info = comptime @typeInfo(t).@"enum";
-    var res: ?t = null;
     inline for (t_info.field_names, t_info.field_values) |name, value| {
-        const lower_cased = comptime blk: {
-            var l: [name.len]u8 = undefined;
-            for (name, &l) |c, *p| {
-                p.* = std.ascii.toLower(c);
-            }
-            break :blk l;
-        };
+        const lc = comptime comptimeLowerCased(name);
         if (std.mem.eql(u8, name, from) or
-            std.mem.eql(u8, &lower_cased, from))
-        {
-            res = @fromBackingInt(@intCast(value));
-        }
+            std.mem.eql(u8, &lc, from))
+            return @fromBackingInt(@intCast(value));
     }
-    return res;
+    return null;
 }
 
 fn parseArgs(
