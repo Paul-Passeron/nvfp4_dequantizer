@@ -3,14 +3,28 @@ const st = @import("st");
 const builtin = @import("builtin");
 
 pub const e2m1Alg = enum { look_up_table, bits, tbl };
+
+pub const e4m3Alg = enum { look_up_table, bits };
+
 pub const DequantAlgo = enum { sequential, simd };
+
+const default_e2m1_algo: e2m1Alg = blk: {
+    if (builtin.cpu.arch == .aarch64) {
+        break :blk .tbl;
+    } else {
+        break :blk .look_up_table;
+    }
+};
+
+const default_e4m3_algo: e4m3Alg = .look_up_table;
 
 pub const DequantConfig = struct {
     e2m1: e2m1Alg = default_e2m1_algo,
+    e4m3: e4m3Alg = default_e4m3_algo,
     dequant: DequantAlgo,
 };
 
-fn E2M1FromParts(
+inline fn E2M1FromParts(
     sign: u16,
     e: u16,
     m: u16,
@@ -24,7 +38,7 @@ fn E2M1FromParts(
     return bits;
 }
 
-fn decodeE2M1Impl(x: u4) f32 {
+inline fn decodeE2M1Impl(x: u4) f32 {
     const sign: u16 = @as(u16, x >> 3) << 15;
     const e: u16 = (x >> 1) & 0b11;
     const m: u16 = x & 0b1;
@@ -32,15 +46,13 @@ fn decodeE2M1Impl(x: u4) f32 {
     return @as(f32, @as(f16, @bitCast(bits)));
 }
 
-fn createDecodeE2M1Table() [16]f32 {
+const e2m1_table: [16]f32 = blk: {
     var table: [16]f32 = undefined;
     for (&table, 0..) |*v, i| {
         v.* = decodeE2M1Impl(@as(u4, i));
     }
-    return table;
-}
-
-const e2m1_table: [16]f32 = createDecodeE2M1Table();
+    break :blk table;
+};
 
 pub inline fn decodeE2M1(nibble: u4) f32 {
     return e2m1_table[nibble];
@@ -57,7 +69,7 @@ test "decodeE2M1 covers all 16 values" {
         try std.testing.expectEqual(e, decodeE2M1(@intCast(i)));
 }
 
-fn E4M3FromParts(sign: u16, e: u16, m: u16) u16 {
+inline fn E4M3FromParts(sign: u16, e: u16, m: u16) u16 {
     var bits: u16 = sign;
     if (e == 0b1111 and m == 0b111) {
         bits |= 0x7E00; // NaN
@@ -73,7 +85,7 @@ fn E4M3FromParts(sign: u16, e: u16, m: u16) u16 {
     return bits;
 }
 
-pub fn decodeE4M3(byte: u8) f32 {
+pub inline fn decodeE4M3(byte: u8) f32 {
     const sign: u16 = @as(u16, byte >> 7) << 15;
     const e: u16 = @as(u16, byte >> 3) & 0b1111;
     const m: u16 = byte & 0b111;
@@ -81,7 +93,7 @@ pub fn decodeE4M3(byte: u8) f32 {
     return @as(f32, @as(f16, @bitCast(bits)));
 }
 
-pub fn unpack(byte: u8) [2]u4 {
+pub inline fn unpack(byte: u8) [2]u4 {
     const lo: u4 = @intCast(byte & 0b1111);
     const hi: u4 = @intCast(byte >> 4 & 0b1111);
     return .{ lo, hi };
@@ -394,14 +406,23 @@ fn shuffleMask(
 
 fn e4m3Range(
     comptime n: comptime_int,
+    algo: e4m3Alg,
     bytes: *const [n]u8,
     scale: f32,
 ) @Vector(n, f32) {
-    var sg: @Vector(n, f32) = undefined;
-    inline for (0..n) |k| {
-        sg[k] = e4m3_table[bytes[k]];
+    const V = @Vector(n, f32);
+    switch (algo) {
+        .look_up_table => {
+            var sg: @Vector(n, f32) = undefined;
+            inline for (0..n) |k| {
+                sg[k] = e4m3_table[bytes[k]];
+            }
+            return sg * splat(V, scale);
+        },
+        .bits => {
+            return e4m3RangeImpl(n, bytes) * splat(V, scale);
+        },
     }
-    return sg * splat(@TypeOf(sg), scale);
 }
 
 fn broadcast(
@@ -422,14 +443,14 @@ const e4m3_table: [256]f32 = blk: {
 
 inline fn dequantBlocks(
     comptime B: comptime_int,
-    algo: e2m1Alg,
+    config: DequantConfig,
     packed_bytes: *const [B * 8]u8,
     scales: *const [B]u8,
     inv_global: f32,
     out: *align(1) [B * 16]f32,
 ) void {
-    const dequantized = e2m1Range(B * 8, algo, packed_bytes);
-    const scale_vector = e4m3Range(B, scales, inv_global);
+    const dequantized = e2m1Range(B * 8, config.e2m1, packed_bytes);
+    const scale_vector = e4m3Range(B, config.e4m3, scales, inv_global);
     const broadcasted = broadcast(B, 16, f32, scale_vector);
     const res = dequantized * broadcasted;
     out.* = res;
@@ -455,7 +476,7 @@ const vec_lengths: [lengths_size]u32 = blk: {
 };
 
 noinline fn dequantRangeSimd(
-    algo: e2m1Alg,
+    config: DequantConfig,
     packed_bytes: []const u8,
     scales: []const u8,
     inv_global: f32,
@@ -467,7 +488,7 @@ noinline fn dequantRangeSimd(
             const current_block = scales.len - remaining_blocks;
             dequantBlocks(
                 C,
-                algo,
+                config,
                 packed_bytes[current_block * 8 ..][0 .. C * 8],
                 scales[current_block..][0..C],
                 inv_global,
@@ -478,14 +499,6 @@ noinline fn dequantRangeSimd(
         if (remaining_blocks == 0) return;
     }
 }
-
-const default_e2m1_algo: e2m1Alg = blk: {
-    if (builtin.cpu.arch == .aarch64) {
-        break :blk .tbl;
-    } else {
-        break :blk .look_up_table;
-    }
-};
 
 pub fn dequantRange(
     config: DequantConfig,
@@ -505,7 +518,7 @@ pub fn dequantRange(
         },
         .simd => {
             dequantRangeSimd(
-                config.e2m1,
+                config,
                 packed_bytes,
                 scales,
                 inv_global,
