@@ -4,23 +4,115 @@ const nvfp4 = @import("nvfp4");
 const job = @import("job");
 
 const usage =
-    \\usage: nvfp4 <in .safetensor> <out .safetensor>
+    \\usage: nvfp4 [options] <input>
+    \\
+    \\Options:
+    \\  -o, --output <path>           Output file     (default: out.safetensor)
+    \\  -d, --datatype <f32|f16|bf16> output type     (default: f32)
+    \\  -h, --help                    Show this help
 ;
 
 const Options = struct {
     in: []const u8,
-    out: []const u8,
-
-    fn fromArgs(args: []const [:0]const u8) ?Options {
-        if (args.len != 3) {
-            return null;
-        }
-        return .{
-            .in = args[1],
-            .out = args[2],
-        };
-    }
+    out: []const u8 = "out.safetensors",
+    datatype: st.DataType = .F32,
 };
+
+const ParseError = error{
+    MultipleInputs,
+    MissingInput,
+    UnkownOption,
+    MissingValue,
+    InvalidValue,
+    HelpRequested,
+} || std.mem.Allocator.Error;
+
+fn splitEq(arg: []const u8) struct { name: []const u8, value: ?[]const u8 } {
+    if (std.mem.startsWith(u8, arg, "--")) {
+        if (std.mem.indexOfScalar(u8, arg, '=')) |i| {
+            return .{ .name = arg[0..i], .value = arg[i + 1 ..] };
+        }
+    }
+    return .{ .name = arg, .value = null };
+}
+
+fn isOption(
+    name: []const u8,
+    short: []const u8,
+    long: []const u8,
+) bool {
+    return std.mem.eql(u8, name, short) or
+        std.mem.eql(u8, name, long);
+}
+
+fn takeValue(
+    args: []const [:0]const u8,
+    i: usize,
+    inline_value: ?[]const u8,
+    name: []const u8,
+    err: *std.Io.Writer,
+) ParseError![]const u8 {
+    if (inline_value) |v| return v;
+    if (i + 1 >= args.len) {
+        failMessage(err, "error: {s} requires a value\n", .{name});
+        return error.MissingValue;
+    }
+    return args[i + 1];
+}
+
+fn parseArgs(
+    args: []const [:0]const u8,
+    err: *std.Io.Writer,
+) ParseError!Options {
+    var opts: Options = .{ .in = "" };
+    var i: usize = 1;
+    var input_set = false;
+    while (i < args.len) : (i += 1) {
+        const raw = args[i];
+        if (raw.len < 2 or raw[0] != '-') {
+            if (input_set)
+                return ParseError.MultipleInputs;
+            input_set = true;
+            opts.in = raw;
+            continue;
+        }
+
+        const arg = splitEq(raw);
+        if (isOption(arg.name, "-h", "--help")) {
+            return ParseError.HelpRequested;
+        } else if (isOption(arg.name, "-o", "--output")) {
+            opts.out = try takeValue(args, i, arg.value, arg.name, err);
+            i += 1;
+        } else if (isOption(arg.name, "-d", "--datatype")) {
+            const dt = try takeValue(args, i, arg.value, arg.name, err);
+            var actual_dt: ?st.DataType = null;
+            i += 1;
+            const t_info = comptime @typeInfo(st.DataType).@"enum";
+            inline for (t_info.field_names, t_info.field_values) |name, value| {
+                const lower_cased = comptime blk: {
+                    var res: [name.len]u8 = undefined;
+                    for (name, &res) |c, *p| {
+                        p.* = std.ascii.toLower(c);
+                    }
+                    break :blk res;
+                };
+                if (std.mem.eql(u8, name, dt) or
+                    std.mem.eql(u8, &lower_cased, dt))
+                {
+                    actual_dt = @fromBackingInt(@intCast(value));
+                }
+            }
+            if (actual_dt) |val| {
+                opts.datatype = val;
+            } else {
+                failMessage(err, "Invalid datatype `{s}`", .{dt});
+                return ParseError.InvalidValue;
+            }
+        }
+    }
+    if (!input_set) return ParseError.MissingInput;
+    return opts;
+}
 
 const Layout = struct {
     entries: []job.Entry,
@@ -190,14 +282,23 @@ pub fn main(init: std.process.Init) !void {
     const clock = std.Io.Clock.awake;
     const start_time = clock.now(io);
 
-    const opts = Options.fromArgs(args) orelse
-        return error.CouldntParseArgs;
-
-    var r = st.Registry.fromPath(allocator, io, opts.in) catch |e|
-        fail(err, "could not load safetensors file at `{s}`: {}", .{
+    const opts = parseArgs(args, err) catch |e| {
+        switch (e) {
+            error.HelpRequested => {
+                err.print(usage ++ "\n", .{}) catch {};
+                return;
+            },
+            error.OutOfMemory => return e,
+            else => fail(err),
+        }
+    };
+    var r = st.Registry.fromPath(allocator, io, opts.in) catch |e| {
+        failMessage(err, "could not load safetensors file at `{s}`: {}", .{
             opts.in,
             e,
         });
+        std.process.exit(2);
+    };
     defer r.deinit();
 
     var layout = try Layout.fromRegistry(allocator, &r);
@@ -235,15 +336,16 @@ pub fn main(init: std.process.Init) !void {
     try out.flush();
 }
 
-fn fail(
+fn failMessage(
     err: *std.Io.Writer,
     comptime fmt: []const u8,
     args: anytype,
-) noreturn {
-    err.print(
-        "error: " ++ fmt ++ "\n" ++ usage ++ "\n",
-        args,
-    ) catch {};
+) void {
+    err.print("error: " ++ fmt ++ "\n", args) catch {};
     err.flush() catch {};
+}
+
+fn fail(err: *std.Io.Writer) noreturn {
+    err.print(usage ++ "\n", .{}) catch {};
     std.process.exit(2);
 }
