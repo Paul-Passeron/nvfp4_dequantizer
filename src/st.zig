@@ -263,8 +263,6 @@ pub const TensorReader = struct {
 };
 
 test "try tensor reader" {
-
-    // FIXME: Don't use File to open the tensor
     const allocator = std.heap.c_allocator;
     const filename = "nvfp4/model.safetensors";
     const tensor = "model.layers.0.self_attn.q_proj.weight_scale";
@@ -289,11 +287,6 @@ test "try tensor reader" {
     const remaining = try r.allocRemaining(allocator, .unlimited);
     try ts.expectEqual(remaining.len, t.byte_len);
 }
-
-// Trying to do it kind of like the ZML framework
-// So a registry that holds the tensors with a map
-// Then I'll be able to change the tests to directly
-// query the `*Tensor`s, get readers, etc...
 
 pub const Registry = struct {
     // Everything in the registry just lives as long
