@@ -60,6 +60,31 @@ fn takeValue(
     return args[i + 1];
 }
 
+fn parseEnumLitMayBeLowercased(comptime t: type, from: []const u8) ?t {
+    const info = @typeInfo(t);
+    switch (info) {
+        .@"enum" => {},
+        else => @compileError("Expected an enum type"),
+    }
+    const t_info = comptime @typeInfo(t).@"enum";
+    var res: ?t = null;
+    inline for (t_info.field_names, t_info.field_values) |name, value| {
+        const lower_cased = comptime blk: {
+            var l: [name.len]u8 = undefined;
+            for (name, &l) |c, *p| {
+                p.* = std.ascii.toLower(c);
+            }
+            break :blk l;
+        };
+        if (std.mem.eql(u8, name, from) or
+            std.mem.eql(u8, &lower_cased, from))
+        {
+            res = @fromBackingInt(@intCast(value));
+        }
+    }
+    return res;
+}
+
 fn parseArgs(
     args: []const [:0]const u8,
     err: *std.Io.Writer,
@@ -85,24 +110,8 @@ fn parseArgs(
             i += 1;
         } else if (isOption(arg.name, "-d", "--datatype")) {
             const dt = try takeValue(args, i, arg.value, arg.name, err);
-            var actual_dt: ?st.DataType = null;
             i += 1;
-            const t_info = comptime @typeInfo(st.DataType).@"enum";
-            inline for (t_info.field_names, t_info.field_values) |name, value| {
-                const lower_cased = comptime blk: {
-                    var res: [name.len]u8 = undefined;
-                    for (name, &res) |c, *p| {
-                        p.* = std.ascii.toLower(c);
-                    }
-                    break :blk res;
-                };
-                if (std.mem.eql(u8, name, dt) or
-                    std.mem.eql(u8, &lower_cased, dt))
-                {
-                    actual_dt = @fromBackingInt(@intCast(value));
-                }
-            }
-            if (actual_dt) |val| {
+            if (parseEnumLitMayBeLowercased(st.DataType, dt)) |val| {
                 opts.datatype = val;
             } else {
                 failMessage(err, "Invalid datatype `{s}`", .{dt});
@@ -236,16 +245,16 @@ const Layout = struct {
         out_file: *const std.Io.File,
         global_offset: u64,
     ) ![]job.Job {
-        var jobs: []job.Job = try allocator.alloc(
+        const jobs: []job.Job = try allocator.alloc(
             job.Job,
             self.entries.len,
         );
 
-        for (self.entries, 0..) |e, i| {
-            jobs[i] = .{ .tensor = e, .dest = .{ .file = .{
+        for (self.entries, self.offsets, jobs) |e, offset, *j| {
+            j.* = .{ .tensor = e, .dest = .{ .file = .{
                 .buffer = try allocator.alloc(u8, 4 * 1024 * 1024),
                 .file = out_file,
-                .offset = self.offsets[i] + global_offset,
+                .offset = offset + global_offset,
             } } };
         }
 
