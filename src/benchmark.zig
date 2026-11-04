@@ -274,7 +274,7 @@ test "all benchmarks work with all configs" {
     for ([_]nvfp4.DequantAlgo{ .sequential, .simd }) |ord| {
         for ([_]nvfp4.e2m1Alg{ .bits, .look_up_table, .tbl }) |alg| {
             const config: nvfp4.DequantConfig = .{
-                .ordering = ord,
+                .dequant = ord,
                 .e2m1 = alg,
             };
             _ = try benchmark(a, io, filename, config);
@@ -385,7 +385,7 @@ pub fn main() !void {
             for (ords) |ord| {
                 for (algs) |alg| {
                     _ = try b.run(.{
-                        .ordering = ord,
+                        .dequant = ord,
                         .e2m1 = alg,
                     }, a, io, filename);
                 }
@@ -402,7 +402,7 @@ pub fn main() !void {
         for (ords) |ord| {
             for (algs) |alg| {
                 const config: nvfp4.DequantConfig = .{
-                    .ordering = ord,
+                    .dequant = ord,
                     .e2m1 = alg,
                 };
                 print("Config = {}\n", .{config});

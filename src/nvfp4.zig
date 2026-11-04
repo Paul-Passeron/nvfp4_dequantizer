@@ -2,6 +2,14 @@ const std = @import("std");
 const st = @import("st");
 const builtin = @import("builtin");
 
+pub const e2m1Alg = enum { look_up_table, bits, tbl };
+pub const DequantAlgo = enum { sequential, simd };
+
+pub const DequantConfig = struct {
+    e2m1: e2m1Alg = default_e2m1_algo,
+    dequant: DequantAlgo,
+};
+
 fn E2M1FromParts(
     sign: u16,
     e: u16,
@@ -121,8 +129,6 @@ fn splitBytesIntoNibbles(
         @shuffle(u8, lo, hi, interleaveMask(n));
     return interleaved;
 }
-
-pub const e2m1Alg = enum { look_up_table, bits, tbl };
 
 fn e2m1ByteTable(comptime shift: u5) @Vector(16, u8) {
     var t: [16]u8 = undefined;
@@ -407,8 +413,6 @@ fn broadcast(
     return @shuffle(t, v, undefined, shuffleMask(n, m));
 }
 
-pub const DequantAlgo = enum { sequential, simd };
-
 const e4m3_table: [256]f32 = blk: {
     @setEvalBranchQuota(20_000);
     var t: [256]f32 = undefined;
@@ -483,11 +487,6 @@ const default_e2m1_algo: e2m1Alg = blk: {
     }
 };
 
-pub const DequantConfig = struct {
-    e2m1: e2m1Alg = default_e2m1_algo,
-    ordering: DequantAlgo,
-};
-
 pub fn dequantRange(
     config: DequantConfig,
     packed_bytes: []const u8,
@@ -496,7 +495,7 @@ pub fn dequantRange(
     out: []align(1) f32,
 ) error{InvalidDequantRanges}!void {
     try checkDequantRangeInput(packed_bytes, scales, out);
-    switch (config.ordering) {
+    switch (config.dequant) {
         .sequential => {
             for (scales, 0..) |scale, i| {
                 const bytes_slice = packed_bytes[i * 8 ..][0..8];
@@ -811,7 +810,7 @@ test "nvfp4 and f32 are the same sequential" {
     var actual_reader = try t.reader(io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
-    }, .{ .ordering = .sequential });
+    }, .{ .dequant = .sequential });
     defer actual_reader.deinit();
 
     var expected_buffer: [4096]u8 = undefined;
@@ -872,7 +871,7 @@ test "nvfp4 and f32 are the same simd" {
     var actual_reader = try t.reader(io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
-    }, .{ .ordering = .simd });
+    }, .{ .dequant = .simd });
     defer actual_reader.deinit();
 
     var expected_buffer: [4096]u8 = undefined;
@@ -924,7 +923,7 @@ test "nvfp4 is the same for sequential and simd" {
     var actual_reader = try t.reader(io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
-    }, .{ .ordering = .simd });
+    }, .{ .dequant = .simd });
     defer actual_reader.deinit();
 
     var expected_packed_buffer: [4096]u8 = undefined;
@@ -932,7 +931,7 @@ test "nvfp4 is the same for sequential and simd" {
     var expected_reader = try t.reader(io, .{
         .packed_bytes = &expected_packed_buffer,
         .scales = &expected_scales_buffer,
-    }, .{ .ordering = .sequential });
+    }, .{ .dequant = .sequential });
     defer expected_reader.deinit();
 
     var actual_chunk: [64 * 1024]u8 align(@alignOf(f32)) = undefined;
@@ -988,7 +987,7 @@ test "nvfp4 reader through a small interface buffer sequential" {
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
         .interface = &interface_buffer,
-    }, .{ .ordering = .sequential });
+    }, .{ .dequant = .sequential });
     defer actual_reader.deinit();
 
     var expected_file_buffer: [4096]u8 = undefined;
@@ -1048,7 +1047,7 @@ test "nvfp4 reader through a small interface buffer simd" {
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
         .interface = &interface_buffer,
-    }, .{ .ordering = .simd });
+    }, .{ .dequant = .simd });
     defer actual_reader.deinit();
 
     var expected_file_buffer: [4096]u8 = undefined;
