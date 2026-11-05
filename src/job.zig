@@ -85,12 +85,14 @@ pub const Job = struct {
             .discard => {
                 var buffer: [32 * 1024]u8 = undefined;
                 var w = std.Io.Writer.Discarding.init(&buffer);
-                _ = try reader.streamRemaining(&w.writer);
+                const count = try reader.streamRemaining(&w.writer);
+                if (count != byte_count) return error.WriteFailed;
             },
             .file => |f| {
                 var w = f.file.writer(io, f.buffer);
                 w.pos = f.offset;
-                _ = try reader.streamRemaining(&w.interface);
+                const count = try reader.streamRemaining(&w.interface);
+                if (count != byte_count) return error.WriteFailed;
                 try w.flush();
             },
         }

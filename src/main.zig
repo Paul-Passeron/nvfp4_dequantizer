@@ -8,7 +8,7 @@ const usage =
     \\usage: nvfp4 [options] <input>
     \\
     \\Options:
-    \\  -o, --output <path>           Output file     (default: out.safetensor)
+    \\  -o, --output <path>           Output file     (default: out.safetensors)
     \\  -d, --datatype <f32|f16|bf16> Output type     (default: f32)
     \\  -h, --help                    Show this help
 ;
@@ -22,7 +22,7 @@ const Options = struct {
 const ParseError = error{
     MultipleInputs,
     MissingInput,
-    UnkownOption,
+    UnknownOption,
     MissingValue,
     InvalidValue,
     HelpRequested,
@@ -55,7 +55,7 @@ fn takeValue(
 ) ParseError![]const u8 {
     if (inline_value) |v| return v;
     if (i.* + 1 >= args.len) {
-        failMessage(err, "error: {s} requires a value\n", .{name});
+        failMessage(err, "{s} requires a value", .{name});
         return error.MissingValue;
     }
     i.* += 1;
@@ -119,6 +119,9 @@ fn parseArgs(
                 failMessage(err, "Invalid datatype `{s}`", .{dt});
                 return ParseError.InvalidValue;
             }
+        } else {
+            failMessage(err, "unknown option `{s}`", .{arg.name});
+            return ParseError.UnknownOption;
         }
     }
     if (!input_set) return ParseError.MissingInput;
@@ -417,5 +420,6 @@ fn failMessage(
 
 fn fail(err: *std.Io.Writer) noreturn {
     err.print(usage ++ "\n", .{}) catch {};
+    err.flush() catch {};
     std.process.exit(2);
 }

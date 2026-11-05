@@ -524,9 +524,9 @@ pub fn main() !void {
                 print("Config = {}\n", .{config});
                 for (0..warmup) |_| {
                     const res = try runBenchmark(b, config, a, io, dt, filename);
-                    const r = res.duration.toMilliseconds();
-                    const rm = min_res.duration.toMilliseconds();
-                    if (first or r < rm) {
+                    if (first or res.duration.toMilliseconds() <
+                        min_res.duration.toMilliseconds())
+                    {
                         min_b = b;
                         min_config = config;
                         min_res = res;

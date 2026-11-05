@@ -328,6 +328,7 @@ pub const Registry = struct {
         path: []const u8,
     ) !Registry {
         var this: Registry = .init(allocator);
+        errdefer this.deinit();
         if (!std.mem.endsWith(u8, path, ".safetensors")) {
             return error.UnsupportedFileKind;
         }

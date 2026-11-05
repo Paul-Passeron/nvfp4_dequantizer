@@ -757,7 +757,10 @@ pub const Tensor = struct {
                 registry,
                 base,
                 "weight_packed",
-            ) catch return null;
+            ) catch |e| switch (e) {
+                error.MissingTensorInfo => return null,
+                error.OutOfMemory => return error.OutOfMemory,
+            };
 
         scratch.reset();
         const weight_scale =
@@ -826,11 +829,6 @@ const possible_data_types = [_]type{ f32, f16, u16 };
 const max_alignement: comptime_int = blk: {
     var max = 0;
     for (possible_data_types) |dt| max = @max(max, @alignOf(dt));
-    break :blk max;
-};
-const max_size: comptime_int = blk: {
-    var max = 0;
-    for (possible_data_types) |dt| max = @max(max, @sizeOf(dt));
     break :blk max;
 };
 
