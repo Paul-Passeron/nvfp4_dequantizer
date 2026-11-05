@@ -2,6 +2,7 @@ const std = @import("std");
 const st = @import("st");
 const nvfp4 = @import("nvfp4");
 const job = @import("job");
+const builtin = @import("builtin");
 
 const usage =
     \\usage: nvfp4 [options] <input>
@@ -284,8 +285,8 @@ fn getRealPath(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
 }
 
 fn arePathsTheSame(io: std.Io, a: []const u8, b: []const u8) bool {
-    var a_f_name_buffer: [1024]u8 = undefined;
-    var b_f_name_buffer: [1024]u8 = undefined;
+    var a_f_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var b_f_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const a_name = getRealPath(io, a, &a_f_name_buffer) catch return false;
     const b_name = getRealPath(io, b, &b_f_name_buffer) catch return false;
     return std.mem.eql(u8, a_name, b_name);
