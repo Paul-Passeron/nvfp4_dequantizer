@@ -132,35 +132,16 @@ pub fn dequantBlockToF32Vector(
     return @as(V, out) * splat(V, scale_f);
 }
 
-pub fn dequantBlockF32(
-    packed_bytes: *const [8]u8,
-    scale: u8,
-    inv_global: f32,
-    out: *align(1) [16]f32,
-) void {
-    out.* = dequantBlockToF32Vector(packed_bytes, scale, inv_global);
-}
-
-pub fn dequantBlockF16(
-    packed_bytes: *const [8]u8,
-    scale: u8,
-    inv_global: f32,
-    out: *align(1) [16]f16,
-) void {
-    const v = dequantBlockToF32Vector(packed_bytes, scale, inv_global);
-    out.* = @as(@Vector(16, f16), @floatCast(v));
-}
-
-pub fn dequantBlockBF16(
-    packed_bytes: *const [8]u8,
-    scale: u8,
-    inv_global: f32,
-    out: *align(1) [16]u16,
-) void {
-    const v: @Vector(16, f32) = dequantBlockToF32Vector(packed_bytes, scale, inv_global);
-    const bitcasted: @Vector(16, u32) = @bitCast(v);
-    const truncated: @Vector(16, u16) = @truncate(bitcasted);
-    out.* = truncated;
+pub fn dequantBlockCastOp(comptime ty: type, v: @Vector(16, f32)) @Vector(16, ty) {
+    return switch (ty) {
+        inline f32 => v,
+        inline f16 => @floatCast(v),
+        inline u16 => @truncate(@as(@Vector(16, u32), @bitCast(v))),
+        inline else => @compileError(
+            "Expected type to be f32, f16 or u16, but got " ++
+                @typeName(ty),
+        ),
+    };
 }
 
 pub fn dequantBlock(
@@ -170,15 +151,8 @@ pub fn dequantBlock(
     inv_global: f32,
     out: *align(1) [16]ty,
 ) void {
-    switch (ty) {
-        inline f32 => dequantBlockF32(packed_bytes, scale, inv_global, out),
-        inline f16 => dequantBlockF16(packed_bytes, scale, inv_global, out),
-        inline u16 => dequantBlockBF16(packed_bytes, scale, inv_global, out),
-        inline else => @compileError(
-            "Expected type to be f32, f16 or u16, but got " ++
-                @typeName(ty),
-        ),
-    }
+    const v = dequantBlockToF32Vector(packed_bytes, scale, inv_global);
+    out.* = dequantBlockCastOp(ty, v);
 }
 
 fn checkDequantRangeInput(
@@ -346,7 +320,7 @@ fn e2m1RangeBits(
         inline f32 => e2m1RangeBitsF32(n, packed_bytes),
         inline f16 => @panic("TODO: f16 support"),
         inline u16 => e2m1RangeBitsBF16(n, packed_bytes),
-        else => @compileError(
+        inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
@@ -358,7 +332,7 @@ fn e2m1Table(comptime ty: type) *const [16]ty {
         inline f32 => &e2m1_table_f32,
         inline f16 => &e2m1_table_f16,
         inline u16 => &e2m1_table_bf16,
-        else => @compileError(
+        inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
@@ -390,7 +364,7 @@ fn e2m1RangeTbl(
         inline f32 => e2m1RangeTblF32(n, packed_bytes),
         inline f16 => @panic("TODO: f16 support"),
         inline u16 => e2m1RangeTblBF16(n, packed_bytes),
-        else => @compileError(
+        inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
