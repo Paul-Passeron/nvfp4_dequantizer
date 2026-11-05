@@ -276,6 +276,21 @@ fn deinitJobs(allocator: std.mem.Allocator, jobs: []job.Job) void {
     allocator.free(jobs);
 }
 
+fn getRealPath(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
+    const a_f = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer a_f.close(io);
+    const length = try a_f.realPath(io, buf);
+    return buf[0..length];
+}
+
+fn arePathsTheSame(io: std.Io, a: []const u8, b: []const u8) bool {
+    var a_f_name_buffer: [1024]u8 = undefined;
+    var b_f_name_buffer: [1024]u8 = undefined;
+    const a_name = getRealPath(io, a, &a_f_name_buffer) catch return false;
+    const b_name = getRealPath(io, b, &b_f_name_buffer) catch return false;
+    return std.mem.eql(u8, a_name, b_name);
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
@@ -331,26 +346,13 @@ pub fn main(init: std.process.Init) !void {
     var layout = try Layout.fromRegistry(allocator, opts.datatype, &r);
     defer layout.deinit(allocator);
 
-    if (std.Io.Dir.cwd().openFile(io, opts.out, .{}) catch null) |opened_out_file| {
-        const in_file = try std.Io.Dir.cwd().openFile(io, opts.in, .{});
-        var in_f_name_buffer: [1024]u8 = undefined;
-        const in_f_name_length = try in_file.realPath(io, &in_f_name_buffer);
-        in_file.close(io);
-        const in_f_name = in_f_name_buffer[0..in_f_name_length];
-
-        var out_f_name_buffer: [1024]u8 = undefined;
-        const out_f_name_length = try opened_out_file.realPath(io, &out_f_name_buffer);
-        opened_out_file.close(io);
-        const out_f_name = out_f_name_buffer[0..out_f_name_length];
-
-        if (std.mem.eql(u8, out_f_name, in_f_name)) {
-            failMessage(
-                err,
-                "Input and output files are the same: `{s}`",
-                .{in_f_name},
-            );
-            std.process.exit(2);
-        }
+    if (arePathsTheSame(io, opts.in, opts.out)) {
+        failMessage(
+            err,
+            "Input and output files are the same: `{s}`",
+            .{opts.in},
+        );
+        std.process.exit(2);
     }
 
     const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
