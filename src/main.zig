@@ -243,7 +243,7 @@ const Layout = struct {
     }
 
     fn getJobs(
-        self: *Layout,
+        self: *const Layout,
         allocator: std.mem.Allocator,
         out_file: *const std.Io.File,
         global_offset: u64,
@@ -290,6 +290,36 @@ fn arePathsTheSame(io: std.Io, a: []const u8, b: []const u8) bool {
     const a_name = getRealPath(io, a, &a_f_name_buffer) catch return false;
     const b_name = getRealPath(io, b, &b_f_name_buffer) catch return false;
     return std.mem.eql(u8, a_name, b_name);
+}
+
+fn fileSize(io: std.Io, path: []const u8) !u64 {
+    const stat = try std.Io.Dir.cwd().statFile(io, path, .{});
+    return stat.size;
+}
+
+fn writeDequantizedFile(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    out_file: *const std.Io.File,
+    layout: *const Layout,
+) !u64 {
+    var f_buffer: [32 * 1024]u8 = undefined;
+    var f_writer = out_file.writer(io, &f_buffer);
+
+    const header_bytes = try layout.writeHeader(&f_writer);
+    const total_header_bytes = 8 + header_bytes;
+    const total_file_size = total_header_bytes + layout.total_byte_len;
+
+    try out_file.setLength(io, total_file_size);
+
+    const jobs = try layout.getJobs(allocator, out_file, total_header_bytes);
+    defer deinitJobs(allocator, jobs);
+
+    try job.runAllJobs(io, allocator, .{ .dequant = .simd }, jobs);
+
+    try f_writer.flush();
+
+    return total_file_size;
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -359,27 +389,16 @@ pub fn main(init: std.process.Init) !void {
     const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
     defer out_file.close(io);
 
-    var f_buffer: [32 * 1024]u8 = undefined;
-    var f_writer = out_file.writer(io, &f_buffer);
-
-    const header_bytes = try layout.writeHeader(&f_writer);
-    const total_file_size = 8 + header_bytes + layout.total_byte_len;
-    try out_file.setLength(io, total_file_size);
-
-    const jobs = try layout.getJobs(allocator, &out_file, header_bytes + 8);
-    defer deinitJobs(allocator, jobs);
-
-    try job.runAllJobs(io, allocator, .{ .dequant = .simd }, jobs);
-
-    try f_writer.flush();
+    const total_file_size =
+        try writeDequantizedFile(io, allocator, &out_file, &layout);
 
     const end_time = clock.now(io);
     const duration = start_time.durationTo(end_time);
 
-    try out.print("registry count = {}\n", .{r.count()});
-    try out.print("jobs count = {}\n", .{jobs.len});
-    try out.print("read \t{} bytes\nwrote \t{} bytes\nin {f}.\n", .{
-        layout.total_byte_len,
+    const input_file_size = try fileSize(io, opts.in);
+
+    try out.print("read \t{} bytes\nwrote \t{} bytes\ntime: {f}.\n", .{
+        input_file_size,
         total_file_size,
         duration,
     });
