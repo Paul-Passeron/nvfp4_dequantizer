@@ -624,19 +624,6 @@ const e4m3_table: [256]f32 = blk: {
     break :blk t;
 };
 
-// inline fn operationToDequantBlocks(
-//     comptime ty: type,
-//     comptime n: comptime_int,
-//     val: @Vector(n, f32),
-// ) @Vector(n, ty) {
-//     return switch (ty) {
-//         inline f32 => val,
-//         inline f16 => @floatCast(val),
-//         inline u16 => @truncate(@as(@Vector(n, u32), @bitCast(val)) >> ),
-//         inline else => unreachable,
-//     };
-// }
-
 inline fn dequantBlocks(
     comptime ty: type,
     comptime B: comptime_int,
