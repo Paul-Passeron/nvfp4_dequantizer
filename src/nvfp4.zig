@@ -134,6 +134,33 @@ pub fn dequantBlockF32(
     out.* = v2 * v;
 }
 
+pub fn dequantBlockF16(
+    packed_bytes: *const [8]u8,
+    scale: u8,
+    inv_global: f32,
+    out: *align(1) [16]f16,
+) void {
+    const VF32 = @Vector(16, f32);
+    var as_f32: [16]f32 = undefined;
+    dequantBlockF32(packed_bytes, scale, inv_global, &as_f32);
+    const v: VF32 = as_f32;
+    out.* = @as(@Vector(16, f16), @floatCast(v));
+}
+
+pub fn dequantBlockBF16(
+    packed_bytes: *const [8]u8,
+    scale: u8,
+    inv_global: f32,
+    out: *align(1) [16]u16,
+) void {
+    var as_f32: [16]f32 = undefined;
+    dequantBlockF32(packed_bytes, scale, inv_global, &as_f32);
+    const v: @Vector(16, f32) = as_f32;
+    const bitcasted: @Vector(16, u32) = @bitCast(v);
+    const truncated: @Vector(16, u16) = @truncate(bitcasted);
+    out.* = truncated;
+}
+
 pub fn dequantBlock(
     comptime ty: type,
     packed_bytes: *const [8]u8,
@@ -143,8 +170,8 @@ pub fn dequantBlock(
 ) void {
     switch (ty) {
         inline f32 => dequantBlockF32(packed_bytes, scale, inv_global, out),
-        inline f16 => @panic("TODO"),
-        inline u16 => @panic("TODO"),
+        inline f16 => dequantBlockF16(packed_bytes, scale, inv_global, out),
+        inline u16 => dequantBlockBF16(packed_bytes, scale, inv_global, out),
         inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
