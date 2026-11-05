@@ -300,6 +300,19 @@ fn e2m1RangeBitsF32(
     return @bitCast(bits);
 }
 
+/// TODO: actually compute this on 2 bytes rather than 4 and cast f32 -> f16
+fn e2m1RangeBitsF16(
+    comptime n: comptime_int,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, f16) {
+    const as_bf16 = e2m1RangeBitsBF16(n, packed_bytes);
+    const widened: @Vector(n * 2, u32) = as_bf16;
+    const bits: @Vector(n * 2, u32) =
+        widened << splat(@Vector(n * 2, u5), 16);
+    const as_f32: @Vector(n * 2, f32) = @bitCast(bits);
+    return @floatCast(as_f32);
+}
+
 fn e2m1RangeBitsBF16(
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
@@ -335,7 +348,7 @@ fn e2m1RangeBits(
 ) @Vector(n * 2, ty) {
     return switch (ty) {
         inline f32 => e2m1RangeBitsF32(n, packed_bytes),
-        inline f16 => @panic("TODO: f16 support"),
+        inline f16 => e2m1RangeBitsF16(n, packed_bytes),
         inline u16 => e2m1RangeBitsBF16(n, packed_bytes),
         inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
