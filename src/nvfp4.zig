@@ -262,10 +262,17 @@ inline fn decodeE2M1FromIndices(comptime ty: type, idx: @Vector(16, u8)) @Vector
             const b3 = tbl(e2m1_byte3_table, idx);
             const b2 = tbl(e2m1_byte2_table, idx);
             const hi16 = merge2U8aAsU16(16, b2, b3);
-            return @truncate(hi16);
+            return hi16;
         },
-        inline f16 => @panic("TODO: support f16"),
-        else => @compileError(
+        inline f16 => {
+            // TODO: Maybe only deal with 16 bytes values rather than cast from f3 2to f16
+            const b3 = tbl(e2m1_byte3_table, idx);
+            const b2 = tbl(e2m1_byte2_table, idx);
+            const hi16 = merge2U8aAsU16(16, b2, b3);
+            const as_f32: @Vector(16, f32) = @bitCast(@as(@Vector(16, u32), hi16) << @splat(16));
+            return @floatCast(as_f32);
+        },
+        inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
