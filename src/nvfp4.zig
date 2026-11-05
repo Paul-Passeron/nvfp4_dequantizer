@@ -136,7 +136,7 @@ pub fn dequantBlockCastOp(comptime ty: type, v: @Vector(16, f32)) @Vector(16, ty
     return switch (ty) {
         inline f32 => v,
         inline f16 => @floatCast(v),
-        inline u16 => @truncate(@as(@Vector(16, u32), @bitCast(v))),
+        inline u16 => @truncate(@as(@Vector(16, u32), @bitCast(v)) >> splat(@Vector(16, u5), 16)),
         inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
