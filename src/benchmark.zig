@@ -303,6 +303,119 @@ test "all benchmarks work with all configs" {
     }
 }
 
+const Tolerance = struct {
+    rel: f32,
+    abs: f32,
+
+    fn of(dt: st.DataType) Tolerance {
+        return switch (dt) {
+            .F32 => .{ .rel = 1e-3, .abs = 0 },
+            .F16 => .{ .rel = 2e-3, .abs = std.math.floatTrueMin(f16) },
+            .BF16 => .{ .rel = 1e-2, .abs = 0 },
+            else => unreachable,
+        };
+    }
+};
+
+fn decodedToF32(dt: st.DataType, bytes: []const u8) f32 {
+    return switch (dt) {
+        .F32 => @bitCast(std.mem.readInt(u32, bytes[0..4], .little)),
+        .F16 => @as(
+            f16,
+            @bitCast(std.mem.readInt(u16, bytes[0..2], .little)),
+        ),
+        .BF16 => @bitCast(
+            @as(u32, std.mem.readInt(u16, bytes[0..2], .little)) << 16,
+        ),
+        else => unreachable,
+    };
+}
+
+test "all configs and datatypes are close to f32" {
+    const a = std.testing.allocator;
+    const base = "model.layers.0.self_attn.q_proj";
+    var threaded: Io.Threaded = .init(a, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var nvfp4_reg: st.Registry =
+        try .fromPath(a, io, "nvfp4/model.safetensors");
+    defer nvfp4_reg.deinit();
+    var f32_reg: st.Registry = try .fromPath(
+        a,
+        io,
+        "converted_f32/model-00001-of-00001.safetensors",
+    );
+    defer f32_reg.deinit();
+
+    const expected = f32_reg.get(base ++ ".weight") orelse
+        return error.MissingTensor;
+    try std.testing.expectEqual(st.DataType.F32, expected.dtype);
+
+    const chunk_values = 16 * 1024;
+    var packed_buffer: [4096]u8 = undefined;
+    var scales_buffer: [4096]u8 = undefined;
+    var expected_buffer: [4096]u8 = undefined;
+    var actual_chunk: [chunk_values * @sizeOf(f32)]u8 = undefined;
+    var expected_chunk: [chunk_values]f32 = undefined;
+
+    for (all_datatypes) |dt| {
+        const t = try nvfp4.Tensor.fromRegistry(dt, &nvfp4_reg, base) orelse
+            return error.MissingTensor;
+        try std.testing.expectEqualSlices(u64, expected.shape, &t.shape());
+
+        const size = dt.byteCount();
+        const tolerance: Tolerance = .of(dt);
+
+        for (all_configs) |config| {
+            errdefer std.debug.print(
+                "failed for {s} with {any}\n",
+                .{ dt.str(), config },
+            );
+
+            var actual_reader = try t.reader(a, io, .{
+                .packed_bytes = &packed_buffer,
+                .scales = &scales_buffer,
+            }, config);
+            defer actual_reader.deinit();
+
+            var expected_reader: st.TensorReader = try .init(io, expected, .{
+                .file = &expected_buffer,
+            });
+            defer expected_reader.deinit();
+
+            var left = t.dequantByteLen();
+            while (left > 0) {
+                const n: usize = @intCast(@min(left / size, chunk_values));
+                try actual_reader.interface.readSliceAll(
+                    actual_chunk[0 .. n * size],
+                );
+                try expected_reader.interface.readSliceAll(
+                    std.mem.sliceAsBytes(expected_chunk[0..n]),
+                );
+
+                for (expected_chunk[0..n], 0..) |e, i| {
+                    const v = decodedToF32(
+                        dt,
+                        actual_chunk[i * size ..][0..size],
+                    );
+                    try std.testing.expectApproxEqAbs(
+                        e,
+                        v,
+                        @max(tolerance.rel * @abs(e), tolerance.abs),
+                    );
+                }
+                left -= n * size;
+            }
+
+            try std.testing.expectEqual(
+                @as(usize, 0),
+                try actual_reader.interface.discardRemaining(),
+            );
+        }
+    }
+}
+
 fn runBenchmark(
     self: Benchmark,
     config: nvfp4.DequantConfig,
