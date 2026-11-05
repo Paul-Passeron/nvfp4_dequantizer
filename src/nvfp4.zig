@@ -8,8 +8,6 @@ pub const e4m3Alg = enum { look_up_table, bits };
 
 pub const DequantAlgo = enum { sequential, simd };
 
-const bf16 = enum(u16) { _ };
-
 const default_e2m1_algo: e2m1Alg = blk: {
     if (builtin.cpu.arch == .aarch64) {
         break :blk .tbl;
@@ -60,8 +58,8 @@ const e2m1_table_f32: [16]f32 = blk: {
     break :blk table;
 };
 
-const e2m1_table_bf16: [16]bf16 = blk: {
-    var table: [16]bf16 = undefined;
+const e2m1_table_bf16: [16]u16 = blk: {
+    var table: [16]u16 = undefined;
     for (&table, e2m1_table_f32) |*v, x| {
         const as_u32: u32 = @bitCast(x);
         const truncated: u16 = @truncate(as_u32);
@@ -148,7 +146,7 @@ pub fn dequantBlock(
         inline f16 => @panic("TODO"),
         inline u16 => @panic("TODO"),
         inline else => @compileError(
-            "Expected type to be f32, f16 or bf16, but got " ++
+            "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
     }
@@ -240,7 +238,16 @@ inline fn merge2U8aAsU16(
     return @bitCast(@shuffle(u8, lo, hi, interleaveMask(n)));
 }
 
-inline fn decodeE2M1FromIndices(comptime ty: type, idx: @Vector(16, u8)) @Vector(16, u32) {
+fn decodeE2M1FromIndicesType(comptime ty: type) type {
+    return switch (ty) {
+        inline f32 => u32,
+        inline u16 => u16,
+        inline f16 => u16,
+        else => unreachable,
+    };
+}
+
+inline fn decodeE2M1FromIndices(comptime ty: type, idx: @Vector(16, u8)) @Vector(16, decodeE2M1FromIndicesType(ty)) {
     switch (ty) {
         inline f32 => {
             const b3 = tbl(e2m1_byte3_table, idx);
@@ -248,15 +255,15 @@ inline fn decodeE2M1FromIndices(comptime ty: type, idx: @Vector(16, u8)) @Vector
             const hi16 = merge2U8aAsU16(16, b2, b3);
             return (@as(@Vector(16, u32), hi16) << @splat(16));
         },
-        inline bf16 => {
+        inline u16 => {
             const b3 = tbl(e2m1_byte3_table, idx);
             const b2 = tbl(e2m1_byte2_table, idx);
             const hi16 = merge2U8aAsU16(16, b2, b3);
-            return @bitCast(hi16);
+            return @truncate(hi16);
         },
         inline f16 => @panic("TODO: support f16"),
         else => @compileError(
-            "Expected type to be f32, f16 or bf16, but got " ++
+            "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
     }
@@ -309,9 +316,9 @@ fn e2m1RangeBits(
     return switch (ty) {
         inline f32 => e2m1RangeBitsF32(n, packed_bytes),
         inline f16 => @panic("TODO: f16 support"),
-        inline bf16 => e2m1RangeBitsBF16(n, packed_bytes),
+        inline u16 => e2m1RangeBitsBF16(n, packed_bytes),
         else => @compileError(
-            "Expected type to be f32, f16 or bf16, but got " ++
+            "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
     };
@@ -321,9 +328,9 @@ fn e2m1Table(comptime ty: type) *const [16]ty {
     return switch (ty) {
         inline f32 => &e2m1_table_f32,
         inline f16 => &e2m1_table_f16,
-        inline bf16 => &e2m1_table_bf16,
+        inline u16 => &e2m1_table_bf16,
         else => @compileError(
-            "Expected type to be f32, f16 or bf16, but got " ++
+            "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
     };
@@ -353,9 +360,9 @@ fn e2m1RangeTbl(
     return switch (ty) {
         inline f32 => e2m1RangeTblF32(n, packed_bytes),
         inline f16 => @panic("TODO: f16 support"),
-        inline bf16 => e2m1RangeTblBF16(n, packed_bytes),
+        inline u16 => e2m1RangeTblBF16(n, packed_bytes),
         else => @compileError(
-            "Expected type to be f32, f16 or bf16, but got " ++
+            "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
     };
@@ -380,14 +387,14 @@ fn e2m1RangeTblF32(
 fn e2m1RangeTblBF16(
     comptime n: comptime_int,
     packed_bytes: *const [n]u8,
-) @Vector(n * 2, bf16) {
+) @Vector(n * 2, u16) {
     comptime std.debug.assert(n * 2 % 16 == 0);
     const bytes: @Vector(n, u8) = packed_bytes.*;
     const nibbles: [n * 2]u8 = splitBytesIntoNibbles(n, bytes);
-    var res: [n * 2]u32 = undefined;
+    var res: [n * 2]u16 = undefined;
     inline for (0..n * 2 / 16) |k| {
         const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
-        res[k * 16 ..][0..16].* = decodeE2M1FromIndices(bf16, idx);
+        res[k * 16 ..][0..16].* = decodeE2M1FromIndices(u16, idx);
     }
     const bits: @Vector(n * 2, u16) = res;
     return @bitCast(bits);
@@ -566,7 +573,7 @@ const e4m3_table: [256]f32 = blk: {
     break :blk t;
 };
 
-inline fn dequantBlocks(
+inline fn dequantBlocksF32(
     comptime B: comptime_int,
     config: DequantConfig,
     packed_bytes: *const [B * 8]u8,
@@ -579,6 +586,23 @@ inline fn dequantBlocks(
     const broadcasted = broadcast(B, 16, f32, scale_vector);
     const res = dequantized * broadcasted;
     out.* = res;
+}
+
+inline fn dequantBlocksBF16(
+    comptime B: comptime_int,
+    config: DequantConfig,
+    packed_bytes: *const [B * 8]u8,
+    scales: *const [B]u8,
+    inv_global: f32,
+    out: *align(1) [B * 16]u16,
+) void {
+    const dequantized = e2m1Range(u16, B * 8, config.e2m1, packed_bytes);
+    const scale_vector = e4m3Range(B, config.e4m3, scales, inv_global);
+    const broadcasted = broadcast(B, 16, f32, scale_vector);
+    const res = dequantized * broadcasted;
+    const as_u32: @Vector(B * 16, u32) = @bitCast(res);
+    const trunc: @Vector(B * 16, u16) = @truncate(as_u32);
+    out.* = trunc;
 }
 
 const lengths_size: comptime_int = blk: {
@@ -611,7 +635,32 @@ fn dequantRangeSimdF32(
     inline for (vec_lengths) |C| {
         while (remaining_blocks >= C) {
             const current_block = scales.len - remaining_blocks;
-            dequantBlocks(
+            dequantBlocksF32(
+                C,
+                config,
+                packed_bytes[current_block * 8 ..][0 .. C * 8],
+                scales[current_block..][0..C],
+                inv_global,
+                out[current_block * 16 ..][0 .. C * 16],
+            );
+            remaining_blocks -= C;
+        }
+        if (remaining_blocks == 0) return;
+    }
+}
+
+fn dequantRangeSimdBF16(
+    config: DequantConfig,
+    packed_bytes: []const u8,
+    scales: []const u8,
+    inv_global: f32,
+    out: []align(1) u16,
+) void {
+    var remaining_blocks: usize = scales.len;
+    inline for (vec_lengths) |C| {
+        while (remaining_blocks >= C) {
+            const current_block = scales.len - remaining_blocks;
+            dequantBlocksBF16(
                 C,
                 config,
                 packed_bytes[current_block * 8 ..][0 .. C * 8],
@@ -636,9 +685,9 @@ fn dequantRangeSimd(
     switch (ty) {
         inline f32 => dequantRangeSimdF32(config, packed_bytes, scales, inv_global, out),
         inline f16 => @panic("TODO"),
-        inline u16 => @panic("TODO"),
+        inline u16 => dequantRangeSimdBF16(config, packed_bytes, scales, inv_global, out),
         inline else => @compileError(
-            "Expected type to be f32, f16 or bf16, but got " ++
+            "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
         ),
     }
@@ -780,7 +829,7 @@ const BLOCK_COUNT = 16;
 const PACKED_PER_BLOCK = BLOCK_COUNT / 2; // 2 u4 s packed in a byte
 const CHUNK_BLOCKS = 256;
 
-const possible_data_types = [_]type{ f32, f16, bf16 };
+const possible_data_types = [_]type{ f32, f16, u16 };
 const max_alignement: comptime_int = blk: {
     var max = 0;
     for (possible_data_types) |dt| max = @max(max, @alignOf(dt));
