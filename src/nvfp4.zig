@@ -742,7 +742,12 @@ pub const Tensor = struct {
         dt: st.DataType,
         registry: *const st.Registry,
         base: []const u8,
-    ) error{ MissingTensorInfo, WrongDataType, OutOfMemory }!?Tensor {
+    ) error{
+        MissingTensorInfo,
+        WrongDataType,
+        InvalidTensorInfo,
+        OutOfMemory,
+    }!?Tensor {
         switch (dt) {
             .F32, .F16, .BF16 => {},
             else => return error.WrongDataType,
@@ -779,6 +784,14 @@ pub const Tensor = struct {
                 base,
                 "weight_global_scale",
             );
+
+        if (weight_packed.dtype != .U8 or
+            weight_scale.dtype != .F8_E4M3 or
+            weight_global_scale.dtype != .F32)
+            return error.WrongDataType;
+        if (weight_packed.shape.len != 2 or
+            weight_packed.byte_len != weight_scale.byte_len * PACKED_PER_BLOCK)
+            return error.InvalidTensorInfo;
 
         return .{
             .output_type = dt,

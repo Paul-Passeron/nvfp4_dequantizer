@@ -369,6 +369,9 @@ pub const Registry = struct {
         var read_buf: [4096]u8 = undefined;
         var reader: std.Io.File.Reader = file.reader(io, &read_buf);
         const n = try reader.interface.takeInt(u64, .little);
+        const file_len = try file.length(io);
+        if (n > max_header_len or n > file_len - 8) return error.InvalidHeader;
+        const data_len = file_len - 8 - n;
         // The JSON blob lives as long as the registry (arena allocated)
         const json_blob = try reader.interface.readAlloc(a, n);
 
@@ -378,8 +381,10 @@ pub const Registry = struct {
             json_blob,
             .{ .allocate = .alloc_if_needed },
         );
+        if (root != .object) return error.InvalidHeader;
         var it = root.object.iterator();
         const allocated_path = try self.arena.allocator().dupe(u8, path);
+        var ranges: std.ArrayList([2]u64) = .empty;
         while (it.next()) |entry| {
             if (std.mem.eql(u8, entry.key_ptr.*, "__metadata__")) {
                 if (entry.value_ptr.* != .object)
@@ -393,7 +398,7 @@ pub const Registry = struct {
             const RawTensorInfo = struct {
                 dtype: DataType,
                 shape: []u64,
-                data_offsets: [2]usize,
+                data_offsets: [2]u64,
             };
 
             // TODO: Have RawTensorInfo be types local to this function,
@@ -404,6 +409,14 @@ pub const Registry = struct {
                 entry.value_ptr.*,
                 .{},
             );
+
+            try validateTensorInfo(
+                raw_info.dtype,
+                raw_info.shape,
+                raw_info.data_offsets,
+                data_len,
+            );
+            try ranges.append(a, raw_info.data_offsets);
 
             const offset = raw_info.data_offsets[0] + 8 + n;
             const byte_len = raw_info.data_offsets[1] - raw_info.data_offsets[0];
@@ -417,8 +430,44 @@ pub const Registry = struct {
             };
             try self.tensors.put(a, t.name, t);
         }
+        try validateRangesCoverData(ranges.items, data_len);
     }
 };
+
+const max_header_len = 100 * 1024 * 1024;
+
+fn validateTensorInfo(
+    dtype: DataType,
+    shape: []const u64,
+    range: [2]u64,
+    data_len: u64,
+) error{InvalidHeader}!void {
+    const begin, const end = range;
+    if (begin > end or end > data_len) return error.InvalidHeader;
+    var expected: u64 = dtype.byteCount();
+    for (shape) |dim| {
+        expected = std.math.mul(u64, expected, dim) catch
+            return error.InvalidHeader;
+    }
+    if (expected != end - begin) return error.InvalidHeader;
+}
+
+fn rangeLessThan(_: void, a: [2]u64, b: [2]u64) bool {
+    return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]);
+}
+
+fn validateRangesCoverData(
+    ranges: []([2]u64),
+    data_len: u64,
+) error{InvalidHeader}!void {
+    std.mem.sort([2]u64, ranges, {}, rangeLessThan);
+    var pos: u64 = 0;
+    for (ranges) |range| {
+        if (range[0] != pos) return error.InvalidHeader;
+        pos = range[1];
+    }
+    if (pos != data_len) return error.InvalidHeader;
+}
 
 test "try init registry from a path" {
     const a = std.testing.allocator;
