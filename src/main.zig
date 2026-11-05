@@ -341,7 +341,7 @@ pub fn main(init: std.process.Init) !void {
     const jobs = try layout.getJobs(allocator, &out_file, header_bytes + 8);
     defer deinitJobs(allocator, jobs);
 
-    try job.runAllJobs(io, .{ .dequant = .simd }, jobs);
+    try job.runAllJobs(io, allocator, .{ .dequant = .simd }, jobs);
 
     try f_writer.flush();
 

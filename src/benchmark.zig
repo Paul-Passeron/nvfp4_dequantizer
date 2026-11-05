@@ -114,7 +114,7 @@ fn benchmark(
     var bytes: usize = 0;
 
     for (tensors) |t| {
-        var reader = try t.reader(io, .{
+        var reader = try t.reader(a, io, .{
             .packed_bytes = &packed_buffer,
             .scales = &scales_buffer,
         }, config);
@@ -132,6 +132,7 @@ fn benchmark(
 
 fn benchmarkJobs(
     io: Io,
+    allocator: std.mem.Allocator,
     jobs: []job.Job,
     config: nvfp4.DequantConfig,
 ) !BenchRes {
@@ -143,7 +144,7 @@ fn benchmarkJobs(
 
     const clock = Clock.awake;
     const start = clock.now(io);
-    try job.runAllJobs(io, config, jobs);
+    try job.runAllJobs(io, allocator, config, jobs);
     const end = clock.now(io);
 
     for (jobs) |j| {
@@ -158,6 +159,7 @@ fn benchmarkJobs(
 
 fn benchmarkJobsSequentially(
     io: Io,
+    allocator: std.mem.Allocator,
     jobs: []job.Job,
     config: nvfp4.DequantConfig,
 ) !BenchRes {
@@ -171,7 +173,7 @@ fn benchmarkJobsSequentially(
     const start = clock.now(io);
     for (jobs) |*j| {
         // Doesn't set err
-        try j.runImpl(io, config);
+        try j.runImpl(allocator, io, config);
     }
     const end = clock.now(io);
 
@@ -253,6 +255,7 @@ fn kernelBenchmark(
         while (i < input.scales.len) : (i += chunk_blocks) {
             const k = @min(chunk_blocks, input.scales.len - i);
             try nvfp4.dequantRange(
+                f32,
                 config,
                 input.packed_bytes[i * 8 ..][0 .. k * 8],
                 input.scales[i..][0..k],
@@ -288,8 +291,8 @@ test "all benchmarks work with all configs" {
     defer freeJobs(a, jobs);
     for (all_configs) |config| {
         _ = try benchmark(a, io, filename, config);
-        _ = try benchmarkJobs(io, jobs, config);
-        _ = try benchmarkJobsSequentially(io, jobs, config);
+        _ = try benchmarkJobs(io, a, jobs, config);
+        _ = try benchmarkJobsSequentially(io, a, jobs, config);
     }
 }
 
@@ -351,14 +354,14 @@ const Benchmark = union(enum) {
                 defer reg.deinit();
                 const jobs = try getAllNVFP4Jobs(a, &reg);
                 defer freeJobs(a, jobs);
-                return try benchmarkJobs(io, jobs, config);
+                return try benchmarkJobs(io, a, jobs, config);
             },
             .jobs_seq => {
                 var reg: st.Registry = try .fromPath(a, io, filename);
                 defer reg.deinit();
                 const jobs = try getAllNVFP4Jobs(a, &reg);
                 defer freeJobs(a, jobs);
-                return try benchmarkJobsSequentially(io, jobs, config);
+                return try benchmarkJobsSequentially(io, a, jobs, config);
             },
         }
     }

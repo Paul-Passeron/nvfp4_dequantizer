@@ -116,7 +116,7 @@ pub inline fn unpack(byte: u8) [2]u4 {
     return .{ lo, hi };
 }
 
-pub fn dequantBlock(
+pub fn dequantBlockF32(
     packed_bytes: *const [8]u8,
     scale: u8,
     inv_global: f32,
@@ -136,10 +136,29 @@ pub fn dequantBlock(
     out.* = v2 * v;
 }
 
+pub fn dequantBlock(
+    comptime ty: type,
+    packed_bytes: *const [8]u8,
+    scale: u8,
+    inv_global: f32,
+    out: *align(1) [16]ty,
+) void {
+    switch (ty) {
+        inline f32 => dequantBlockF32(packed_bytes, scale, inv_global, out),
+        inline f16 => @panic("TODO"),
+        inline u16 => @panic("TODO"),
+        inline else => @compileError(
+            "Expected type to be f32, f16 or bf16, but got " ++
+                @typeName(ty),
+        ),
+    }
+}
+
 fn checkDequantRangeInput(
+    comptime ty: type,
     packed_bytes: []const u8,
     scales: []const u8,
-    out: []align(1) f32,
+    out: []align(1) ty,
 ) error{InvalidDequantRanges}!void {
     const err = error.InvalidDequantRanges;
     if (packed_bytes.len % 8 != 0) return err;
@@ -581,7 +600,7 @@ const vec_lengths: [lengths_size]u32 = blk: {
     break :blk res;
 };
 
-noinline fn dequantRangeSimd(
+fn dequantRangeSimdF32(
     config: DequantConfig,
     packed_bytes: []const u8,
     scales: []const u8,
@@ -606,24 +625,45 @@ noinline fn dequantRangeSimd(
     }
 }
 
-pub fn dequantRange(
+fn dequantRangeSimd(
+    comptime ty: type,
     config: DequantConfig,
     packed_bytes: []const u8,
     scales: []const u8,
     inv_global: f32,
-    out: []align(1) f32,
+    out: []align(1) ty,
+) void {
+    switch (ty) {
+        inline f32 => dequantRangeSimdF32(config, packed_bytes, scales, inv_global, out),
+        inline f16 => @panic("TODO"),
+        inline u16 => @panic("TODO"),
+        inline else => @compileError(
+            "Expected type to be f32, f16 or bf16, but got " ++
+                @typeName(ty),
+        ),
+    }
+}
+
+pub fn dequantRange(
+    comptime ty: type,
+    config: DequantConfig,
+    packed_bytes: []const u8,
+    scales: []const u8,
+    inv_global: f32,
+    out: []align(1) ty,
 ) error{InvalidDequantRanges}!void {
-    try checkDequantRangeInput(packed_bytes, scales, out);
+    try checkDequantRangeInput(ty, packed_bytes, scales, out);
     switch (config.dequant) {
         .sequential => {
             for (scales, 0..) |scale, i| {
                 const bytes_slice = packed_bytes[i * 8 ..][0..8];
                 const out_slice = out[i * 16 ..][0..16];
-                dequantBlock(bytes_slice, scale, inv_global, out_slice);
+                dequantBlock(ty, bytes_slice, scale, inv_global, out_slice);
             }
         },
         .simd => {
             dequantRangeSimd(
+                ty,
                 config,
                 packed_bytes,
                 scales,
@@ -715,11 +755,12 @@ pub const Tensor = struct {
 
     pub fn reader(
         self: *const Tensor,
+        allocator: std.mem.Allocator,
         io: std.Io,
         buffers: TensorReader.Buffers,
         config: DequantConfig,
     ) !TensorReader {
-        return TensorReader.init(io, self, buffers, config);
+        return TensorReader.init(io, allocator, self, buffers, config);
     }
 };
 
@@ -736,17 +777,30 @@ test "can get tensor from registry" {
 }
 
 const BLOCK_COUNT = 16;
-const DEQUANT_BLOCK_BYTE_LEN = @sizeOf(f32) * BLOCK_COUNT;
 const PACKED_PER_BLOCK = BLOCK_COUNT / 2; // 2 u4 s packed in a byte
 const CHUNK_BLOCKS = 256;
 
+const possible_data_types = [_]type{ f32, f16, bf16 };
+const max_alignement: comptime_int = blk: {
+    var max = 0;
+    for (possible_data_types) |dt| max = @max(max, @alignOf(dt));
+    break :blk max;
+};
+const max_size: comptime_int = blk: {
+    var max = 0;
+    for (possible_data_types) |dt| max = @max(max, @sizeOf(dt));
+    break :blk max;
+};
+
 pub const TensorReader = struct {
+    dt: st.DataType,
+    allocator: std.mem.Allocator,
     packed_reader: st.TensorReader,
     scale_reader: st.TensorReader,
     inv_global: f32,
     remaining_blocks: u64,
-    pending: [BLOCK_COUNT]f32 = undefined,
-    pending_index: usize = @sizeOf([BLOCK_COUNT]f32),
+    pending: []align(max_alignement) u8,
+    pending_index: usize,
 
     config: DequantConfig,
 
@@ -767,6 +821,93 @@ pub const TensorReader = struct {
         return this.streamImpl(io_writer, limit);
     }
 
+    fn dequantBlockImpl(
+        dt: st.DataType,
+        packed_bytes: *const [8]u8,
+        scale: u8,
+        inv_global: f32,
+        out: []u8,
+    ) void {
+        switch (dt) {
+            .F32 => {
+                dequantBlock(
+                    f32,
+                    packed_bytes,
+                    scale,
+                    inv_global,
+                    std.mem.bytesAsSlice(f32, out)[0..BLOCK_COUNT],
+                );
+            },
+            .F16 => {
+                dequantBlock(
+                    f16,
+                    packed_bytes,
+                    scale,
+                    inv_global,
+                    std.mem.bytesAsSlice(f16, out)[0..BLOCK_COUNT],
+                );
+            },
+            .BF16 => {
+                dequantBlock(
+                    // TODO: bf16 with return type being u16 ?
+                    u16,
+                    packed_bytes,
+                    scale,
+                    inv_global,
+                    std.mem.bytesAsSlice(u16, out)[0..BLOCK_COUNT],
+                );
+            },
+            else => unreachable,
+        }
+    }
+
+    fn dequantRangeImpl(
+        dt: st.DataType,
+        config: DequantConfig,
+        packed_bytes: []const u8,
+        scales: []const u8,
+        inv_global: f32,
+        out: []u8,
+    ) error{InvalidDequantRanges}!void {
+        switch (dt) {
+            .F32 => {
+                try dequantRange(
+                    f32,
+                    config,
+                    packed_bytes,
+                    scales,
+                    inv_global,
+                    std.mem.bytesAsSlice(f32, out),
+                );
+            },
+            .F16 => {
+                try dequantRange(
+                    f16,
+                    config,
+                    packed_bytes,
+                    scales,
+                    inv_global,
+                    std.mem.bytesAsSlice(f16, out),
+                );
+            },
+            .BF16 => {
+                try dequantRange(
+                    u16,
+                    config,
+                    packed_bytes,
+                    scales,
+                    inv_global,
+                    std.mem.bytesAsSlice(u16, out),
+                );
+            },
+            else => unreachable,
+        }
+    }
+
+    fn dequantBlockByteLen(self: *const TensorReader) usize {
+        return self.dt.byteCount() * BLOCK_COUNT;
+    }
+
     fn streamImpl(
         self: *TensorReader,
         io_writer: *std.Io.Writer,
@@ -774,10 +915,9 @@ pub const TensorReader = struct {
     ) std.Io.Reader.StreamError!usize {
 
         // Handle last block if it still hasn't been completely read
-        const pending_bytes: []u8 = std.mem.asBytes(&self.pending);
-        if (self.pending_index < pending_bytes.len) {
+        if (self.pending_index < self.pending.len) {
             const n = try io_writer.write(
-                limit.slice(pending_bytes[self.pending_index..]),
+                limit.slice(self.pending[self.pending_index..]),
             );
             self.pending_index += n;
             return n;
@@ -790,20 +930,21 @@ pub const TensorReader = struct {
         }
 
         const dest = limit.slice(try io_writer.writableSliceGreedy(1));
-        const blocks_to_write = dest.len / DEQUANT_BLOCK_BYTE_LEN;
+        const blocks_to_write = dest.len / self.dequantBlockByteLen();
 
         if (blocks_to_write == 0) {
             const input = try self.readInputs(PACKED_PER_BLOCK, 1);
             const packed_bytes = input.bytes[0..PACKED_PER_BLOCK];
             const scale = input.scales[0];
-            dequantBlock(
+            dequantBlockImpl(
+                self.dt,
                 packed_bytes,
                 scale,
                 self.inv_global,
-                &self.pending,
+                self.pending,
             );
             self.remaining_blocks -= 1;
-            const n = try io_writer.write(limit.slice(pending_bytes));
+            const n = try io_writer.write(limit.slice(self.pending));
             self.pending_index = n;
             return n;
         }
@@ -814,21 +955,21 @@ pub const TensorReader = struct {
             self.remaining_blocks,
         ));
 
-        const n = k * DEQUANT_BLOCK_BYTE_LEN;
+        const n = k * self.dequantBlockByteLen();
         // we know that n fits because
-        // n = k * DEQUANT_BLOCK_BYTE_LEN and k <= blocks_to_write
-        // and blocks_to_write = dest.len / DEQUANT_BLOCK_BYTE_LEN
+        // n = k * self.dequantBlockByteLen() and k <= blocks_to_write
+        // and blocks_to_write = dest.len / self.dequantBlockByteLen()
         // so n <= dest.len
 
         const input = try self.readInputs(k * PACKED_PER_BLOCK, k);
-        const dest_f32: []align(1) f32 =
-            std.mem.bytesAsSlice(f32, dest[0..n]);
-        dequantRange(
+        const dest_sliced: []u8 = dest[0..n];
+        dequantRangeImpl(
+            self.dt,
             self.config,
             input.bytes,
             input.scales,
             self.inv_global,
-            dest_f32,
+            dest_sliced,
         ) catch unreachable;
 
         io_writer.advance(n);
@@ -866,10 +1007,12 @@ pub const TensorReader = struct {
     pub fn deinit(self: *TensorReader) void {
         self.packed_reader.deinit();
         self.scale_reader.deinit();
+        self.allocator.free(self.pending);
     }
 
     fn init(
         io: std.Io,
+        allocator: std.mem.Allocator,
         tensor: *const Tensor,
         buffers: Buffers,
         config: DequantConfig,
@@ -892,12 +1035,20 @@ pub const TensorReader = struct {
 
         const remaining_blocks = tensor.weight_scale.byte_len;
         return .{
+            .dt = tensor.output_type,
+            .allocator = allocator,
             .packed_reader = packed_reader,
             .scale_reader = scale_reader,
             .inv_global = 1.0 / global,
             .remaining_blocks = remaining_blocks,
             .interface = initInterface(buffers.interface),
             .config = config,
+            .pending = try allocator.alignedAlloc(
+                u8,
+                std.mem.Alignment.fromByteUnits(max_alignement),
+                BLOCK_COUNT * tensor.output_type.byteCount(),
+            ),
+            .pending_index = BLOCK_COUNT * tensor.output_type.byteCount(),
         };
     }
 };
@@ -930,7 +1081,7 @@ test "nvfp4 and f32 are the same sequential" {
 
     var packed_buffer: [4096]u8 = undefined;
     var scales_buffer: [4096]u8 = undefined;
-    var actual_reader = try t.reader(io, .{
+    var actual_reader = try t.reader(a, io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
     }, .{ .dequant = .sequential });
@@ -991,7 +1142,7 @@ test "nvfp4 and f32 are the same simd" {
 
     var packed_buffer: [4096]u8 = undefined;
     var scales_buffer: [4096]u8 = undefined;
-    var actual_reader = try t.reader(io, .{
+    var actual_reader = try t.reader(a, io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
     }, .{ .dequant = .simd });
@@ -1043,7 +1194,7 @@ test "nvfp4 is the same for sequential and simd" {
 
     var packed_buffer: [4096]u8 = undefined;
     var scales_buffer: [4096]u8 = undefined;
-    var actual_reader = try t.reader(io, .{
+    var actual_reader = try t.reader(a, io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
     }, .{ .dequant = .simd });
@@ -1051,7 +1202,7 @@ test "nvfp4 is the same for sequential and simd" {
 
     var expected_packed_buffer: [4096]u8 = undefined;
     var expected_scales_buffer: [4096]u8 = undefined;
-    var expected_reader = try t.reader(io, .{
+    var expected_reader = try t.reader(a, io, .{
         .packed_bytes = &expected_packed_buffer,
         .scales = &expected_scales_buffer,
     }, .{ .dequant = .sequential });
@@ -1106,7 +1257,7 @@ test "nvfp4 reader through a small interface buffer sequential" {
     var packed_buffer: [4096]u8 = undefined;
     var scales_buffer: [4096]u8 = undefined;
     var interface_buffer: [8]u8 = undefined;
-    var actual_reader = try t.reader(io, .{
+    var actual_reader = try t.reader(a, io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
         .interface = &interface_buffer,
@@ -1166,7 +1317,7 @@ test "nvfp4 reader through a small interface buffer simd" {
     var packed_buffer: [4096]u8 = undefined;
     var scales_buffer: [4096]u8 = undefined;
     var interface_buffer: [8]u8 = undefined;
-    var actual_reader = try t.reader(io, .{
+    var actual_reader = try t.reader(a, io, .{
         .packed_bytes = &packed_buffer,
         .scales = &scales_buffer,
         .interface = &interface_buffer,

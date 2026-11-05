@@ -50,8 +50,8 @@ pub const Job = struct {
 
     err: ?anyerror = null,
 
-    fn run(self: *Job, io: std.Io, config: nvfp4.DequantConfig) void {
-        self.runImpl(io, config) catch |err| {
+    fn run(self: *Job, allocator: std.mem.Allocator, io: std.Io, config: nvfp4.DequantConfig) void {
+        self.runImpl(allocator, io, config) catch |err| {
             self.err = err;
             return;
         };
@@ -59,12 +59,13 @@ pub const Job = struct {
 
     pub fn runImpl(
         self: *Job,
+        allocator: std.mem.Allocator,
         io: std.Io,
         config: nvfp4.DequantConfig,
     ) !void {
         switch (self.tensor) {
             .regular => |t| try self.runRegular(t, io),
-            .nvfp4 => |t| try self.runNVFP4(t, io, config),
+            .nvfp4 => |t| try self.runNVFP4(allocator, t, io, config),
         }
     }
 
@@ -110,6 +111,7 @@ pub const Job = struct {
 
     pub fn runNVFP4(
         self: *Job,
+        allocator: std.mem.Allocator,
         t: nvfp4.Tensor,
         io: std.Io,
         config: nvfp4.DequantConfig,
@@ -117,7 +119,7 @@ pub const Job = struct {
         var packed_buffer: [32 * 1024]u8 = undefined;
         var scale_buffer: [32 * 1024]u8 = undefined;
 
-        var reader = try t.reader(io, .{
+        var reader = try t.reader(allocator, io, .{
             .packed_bytes = &packed_buffer,
             .scales = &scale_buffer,
         }, config);
@@ -128,12 +130,13 @@ pub const Job = struct {
 
 pub fn runAllJobs(
     io: std.Io,
+    allocator: std.mem.Allocator,
     config: nvfp4.DequantConfig,
     jobs: []Job,
 ) !void {
     var group: std.Io.Group = .init;
     for (jobs) |*job|
-        group.async(io, Job.run, .{ job, io, config });
+        group.async(io, Job.run, .{ job, allocator, io, config });
     try group.await(io);
     for (jobs) |job| if (job.err) |err| return err;
 }
