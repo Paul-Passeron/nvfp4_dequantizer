@@ -37,7 +37,7 @@ pub const Entry = union(enum) {
 
     pub fn dtype(self: *const Entry) st.DataType {
         return switch (self.*) {
-            .nvfp4 => .F32,
+            .nvfp4 => |t| t.output_type,
             .regular => |t| t.dtype,
         };
     }
@@ -73,11 +73,13 @@ pub const Job = struct {
         io: std.Io,
         reader: *std.Io.Reader,
         dest: Destination,
+        byte_count: usize,
     ) !void {
         switch (dest) {
             .mem => |buffer| {
                 var w = std.Io.Writer.fixed(buffer);
-                _ = try reader.streamRemaining(&w);
+                const count = try reader.streamRemaining(&w);
+                if (count != byte_count) return error.WriteFailed;
                 try w.flush();
             },
             .discard => {
@@ -106,7 +108,7 @@ pub const Job = struct {
             .interface = &interface_buffer,
         });
         defer reader.deinit();
-        try readIntoDest(io, &reader.interface, self.dest);
+        try readIntoDest(io, &reader.interface, self.dest, self.tensor.byteLen());
     }
 
     pub fn runNVFP4(
@@ -124,7 +126,7 @@ pub const Job = struct {
             .scales = &scale_buffer,
         }, config);
         defer reader.deinit();
-        try readIntoDest(io, &reader.interface, self.dest);
+        try readIntoDest(io, &reader.interface, self.dest, self.tensor.byteLen());
     }
 };
 
