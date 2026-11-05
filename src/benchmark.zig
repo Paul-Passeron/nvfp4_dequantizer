@@ -65,7 +65,7 @@ fn getAllNVFP4Jobs(
     a: std.mem.Allocator,
     r: *const st.Registry,
 ) ![]job.Job {
-    const tensors = try nvfp4.getAllNVFP4Tensors(a, r);
+    const tensors = try nvfp4.getAllNVFP4Tensors(a, .F32, r);
     defer a.free(tensors);
 
     var jobs = try a.alloc(job.Job, tensors.len);
@@ -102,7 +102,7 @@ fn benchmark(
     var reg: st.Registry = try .fromPath(a, io, filename);
     defer reg.deinit();
 
-    const tensors = try nvfp4.getAllNVFP4Tensors(a, &reg);
+    const tensors = try nvfp4.getAllNVFP4Tensors(a, .F32, &reg);
     defer a.free(tensors);
 
     const clock = Clock.awake;

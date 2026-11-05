@@ -1359,6 +1359,7 @@ test "nvfp4 reader through a small interface buffer simd" {
 
 pub fn getAllNVFP4Tensors(
     a: std.mem.Allocator,
+    dt: st.DataType,
     r: *const st.Registry,
 ) ![]Tensor {
     var tensors = std.ArrayList(Tensor).empty;
@@ -1371,7 +1372,7 @@ pub fn getAllNVFP4Tensors(
             const base =
                 std.mem.cutSuffix(u8, t.key_ptr.*, suffix) orelse
                 unreachable;
-            const val = try Tensor.fromRegistry(.F32, r, base) orelse
+            const val = try Tensor.fromRegistry(dt, r, base) orelse
                 return error.MissingTensor;
             try tensors.append(a, val);
         }

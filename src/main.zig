@@ -47,17 +47,18 @@ fn isOption(
 
 fn takeValue(
     args: []const [:0]const u8,
-    i: usize,
+    i: *usize,
     inline_value: ?[]const u8,
     name: []const u8,
     err: *std.Io.Writer,
 ) ParseError![]const u8 {
     if (inline_value) |v| return v;
-    if (i + 1 >= args.len) {
+    if (i.* + 1 >= args.len) {
         failMessage(err, "error: {s} requires a value\n", .{name});
         return error.MissingValue;
     }
-    return args[i + 1];
+    i.* += 1;
+    return args[i.*];
 }
 
 fn comptimeLowerCased(comptime s: []const u8) [s.len]u8 {
@@ -105,12 +106,9 @@ fn parseArgs(
         if (isOption(arg.name, "-h", "--help")) {
             return ParseError.HelpRequested;
         } else if (isOption(arg.name, "-o", "--output")) {
-            opts.out = try takeValue(args, i, arg.value, arg.name, err);
-            i += 1;
+            opts.out = try takeValue(args, &i, arg.value, arg.name, err);
         } else if (isOption(arg.name, "-d", "--datatype")) {
-            const dt = try takeValue(args, i, arg.value, arg.name, err);
-            i += 1;
-
+            const dt = try takeValue(args, &i, arg.value, arg.name, err);
             // Kind of over-engineered since we will only accept f32, f16
             // and bf16 but I wanted to try out zig comptime reflection
             // a bit.
@@ -134,6 +132,7 @@ const Layout = struct {
 
     fn fromRegistry(
         allocator: std.mem.Allocator,
+        dt: st.DataType,
         r: *const st.Registry,
     ) !Layout {
         var entries: std.ArrayList(job.Entry) = .empty;
@@ -141,7 +140,7 @@ const Layout = struct {
         errdefer entries.deinit(allocator);
         errdefer offsets.deinit(allocator);
 
-        const nvfp4s = try nvfp4.getAllNVFP4Tensors(allocator, r);
+        const nvfp4s = try nvfp4.getAllNVFP4Tensors(allocator, dt, r);
         defer allocator.free(nvfp4s);
 
         const TMap = std.AutoHashMap(*const st.Tensor, void);
@@ -316,6 +315,10 @@ pub fn main(init: std.process.Init) !void {
         },
     }
 
+    try out.print("in:  `{s}`\n", .{opts.in});
+    try out.print("out: `{s}`\n", .{opts.out});
+    try out.print("dt: {}\n", .{opts.datatype});
+
     var r = st.Registry.fromPath(allocator, io, opts.in) catch |e| {
         failMessage(err, "could not load safetensors file at `{s}`: {}", .{
             opts.in,
@@ -325,7 +328,7 @@ pub fn main(init: std.process.Init) !void {
     };
     defer r.deinit();
 
-    var layout = try Layout.fromRegistry(allocator, &r);
+    var layout = try Layout.fromRegistry(allocator, opts.datatype, &r);
     defer layout.deinit(allocator);
 
     const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
@@ -348,7 +351,6 @@ pub fn main(init: std.process.Init) !void {
     const end_time = clock.now(io);
     const duration = start_time.durationTo(end_time);
 
-    try out.print("in = `{s}`, out = `{s}`\n", .{ opts.in, opts.out });
     try out.print("registry count = {}\n", .{r.count()});
     try out.print("jobs count = {}\n", .{jobs.len});
     try out.print("read \t{} bytes\nwrote \t{} bytes\nin {f}.\n", .{
