@@ -114,15 +114,14 @@ pub inline fn unpack(byte: u8) [2]u4 {
     return .{ lo, hi };
 }
 
-pub fn dequantBlockF32(
+pub fn dequantBlockToF32Vector(
     packed_bytes: *const [8]u8,
     scale: u8,
     inv_global: f32,
-    out: *align(1) [16]f32,
-) void {
+) @Vector(16, f32) {
     const scale_f = decodeE4M3(scale) * inv_global;
     const V = @Vector(16, f32);
-    const v: V = @splat(scale_f);
+    var out: [16]f32 = undefined;
     for (0.., packed_bytes) |i, byte| {
         const lo, const hi = unpack(byte);
         const lo_f = decodeE2M1(lo);
@@ -130,8 +129,16 @@ pub fn dequantBlockF32(
         out[2 * i + 0] = lo_f;
         out[2 * i + 1] = hi_f;
     }
-    const v2: V = out.*;
-    out.* = v2 * v;
+    return @as(V, out) * splat(V, scale_f);
+}
+
+pub fn dequantBlockF32(
+    packed_bytes: *const [8]u8,
+    scale: u8,
+    inv_global: f32,
+    out: *align(1) [16]f32,
+) void {
+    out.* = dequantBlockToF32Vector(packed_bytes, scale, inv_global);
 }
 
 pub fn dequantBlockF16(
@@ -140,10 +147,7 @@ pub fn dequantBlockF16(
     inv_global: f32,
     out: *align(1) [16]f16,
 ) void {
-    const VF32 = @Vector(16, f32);
-    var as_f32: [16]f32 = undefined;
-    dequantBlockF32(packed_bytes, scale, inv_global, &as_f32);
-    const v: VF32 = as_f32;
+    const v = dequantBlockToF32Vector(packed_bytes, scale, inv_global);
     out.* = @as(@Vector(16, f16), @floatCast(v));
 }
 
@@ -153,9 +157,7 @@ pub fn dequantBlockBF16(
     inv_global: f32,
     out: *align(1) [16]u16,
 ) void {
-    var as_f32: [16]f32 = undefined;
-    dequantBlockF32(packed_bytes, scale, inv_global, &as_f32);
-    const v: @Vector(16, f32) = as_f32;
+    const v: @Vector(16, f32) = dequantBlockToF32Vector(packed_bytes, scale, inv_global);
     const bitcasted: @Vector(16, u32) = @bitCast(v);
     const truncated: @Vector(16, u16) = @truncate(bitcasted);
     out.* = truncated;
