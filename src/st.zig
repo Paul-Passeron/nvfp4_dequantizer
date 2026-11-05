@@ -76,8 +76,6 @@ fn expectedDataType(comptime T: type) ?DataType {
     }
 }
 
-// New API (test)
-
 // Have a map from name to tensors
 pub const Tensors = std.StringArrayHashMapUnmanaged(Tensor);
 

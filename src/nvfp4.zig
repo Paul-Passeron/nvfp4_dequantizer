@@ -880,34 +880,27 @@ pub const TensorReader = struct {
         out: []u8,
     ) void {
         switch (dt) {
-            .F32 => {
-                dequantBlock(
-                    f32,
-                    packed_bytes,
-                    scale,
-                    inv_global,
-                    std.mem.bytesAsSlice(f32, out)[0..BLOCK_COUNT],
-                );
-            },
-            .F16 => {
-                dequantBlock(
-                    f16,
-                    packed_bytes,
-                    scale,
-                    inv_global,
-                    std.mem.bytesAsSlice(f16, out)[0..BLOCK_COUNT],
-                );
-            },
-            .BF16 => {
-                dequantBlock(
-                    // TODO: bf16 with return type being u16 ?
-                    u16,
-                    packed_bytes,
-                    scale,
-                    inv_global,
-                    std.mem.bytesAsSlice(u16, out)[0..BLOCK_COUNT],
-                );
-            },
+            .F32 => dequantBlock(
+                f32,
+                packed_bytes,
+                scale,
+                inv_global,
+                std.mem.bytesAsSlice(f32, out)[0..BLOCK_COUNT],
+            ),
+            .F16 => dequantBlock(
+                f16,
+                packed_bytes,
+                scale,
+                inv_global,
+                std.mem.bytesAsSlice(f16, out)[0..BLOCK_COUNT],
+            ),
+            .BF16 => dequantBlock(
+                u16,
+                packed_bytes,
+                scale,
+                inv_global,
+                std.mem.bytesAsSlice(u16, out)[0..BLOCK_COUNT],
+            ),
             else => unreachable,
         }
     }
