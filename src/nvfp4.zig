@@ -189,8 +189,21 @@ fn e2m1ByteTable(comptime shift: u5) @Vector(16, u8) {
     return t;
 }
 
+fn e2m1ByteTableF16(comptime shift: u4) @Vector(16, u8) {
+    var t: [16]u8 = undefined;
+    for (&t, e2m1_table_f16) |*x, f| {
+        const bits: u16 = @bitCast(f);
+        std.debug.assert(bits & 0xFFFF == 0);
+        x.* = @truncate(bits >> shift);
+    }
+    return t;
+}
+
 const e2m1_byte3_table = e2m1ByteTable(24);
 const e2m1_byte2_table = e2m1ByteTable(16);
+
+const e2m1_byte1_table_f16 = e2m1ByteTableF16(8);
+const e2m1_byte0_table_f16 = e2m1ByteTableF16(0);
 
 inline fn tblAsmImpl(
     table: @Vector(16, u8),
@@ -265,12 +278,10 @@ inline fn decodeE2M1FromIndices(comptime ty: type, idx: @Vector(16, u8)) @Vector
             return hi16;
         },
         inline f16 => {
-            // TODO: Maybe only deal with 16 bytes values rather than cast from f3 2to f16
-            const b3 = tbl(e2m1_byte3_table, idx);
-            const b2 = tbl(e2m1_byte2_table, idx);
-            const hi16 = merge2U8aAsU16(16, b2, b3);
-            const as_f32: @Vector(16, f32) = @bitCast(@as(@Vector(16, u32), hi16) << @splat(16));
-            return @floatCast(as_f32);
+            const b1 = tbl(e2m1_byte1_table_f16, idx);
+            const b0 = tbl(e2m1_byte0_table_f16, idx);
+            const as_unsigned = merge2U8aAsU16(16, b0, b1);
+            return @bitCast(as_unsigned);
         },
         inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
