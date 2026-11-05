@@ -72,6 +72,8 @@ pub fn build(b: *std.Build) void {
 
     const exe_artifact = b.addInstallArtifact(exe, .{});
     const bench_artifact = b.addInstallArtifact(bench, .{});
+    b.getInstallStep().dependOn(&exe_artifact.step);
+    b.getInstallStep().dependOn(&bench_artifact.step);
 
     // Stolen from <https://github.com/goreleaser/example-zig/blob/main/build.zig>
 
