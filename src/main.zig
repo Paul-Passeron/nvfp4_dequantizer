@@ -331,6 +331,28 @@ pub fn main(init: std.process.Init) !void {
     var layout = try Layout.fromRegistry(allocator, opts.datatype, &r);
     defer layout.deinit(allocator);
 
+    if (std.Io.Dir.cwd().openFile(io, opts.out, .{}) catch null) |opened_out_file| {
+        const in_file = try std.Io.Dir.cwd().openFile(io, opts.in, .{});
+        var in_f_name_buffer: [1024]u8 = undefined;
+        const in_f_name_length = try in_file.realPath(io, &in_f_name_buffer);
+        in_file.close(io);
+        const in_f_name = in_f_name_buffer[0..in_f_name_length];
+
+        var out_f_name_buffer: [1024]u8 = undefined;
+        const out_f_name_length = try opened_out_file.realPath(io, &out_f_name_buffer);
+        opened_out_file.close(io);
+        const out_f_name = out_f_name_buffer[0..out_f_name_length];
+
+        if (std.mem.eql(u8, out_f_name, in_f_name)) {
+            failMessage(
+                err,
+                "Input and output files are the same: `{s}`",
+                .{in_f_name},
+            );
+            std.process.exit(2);
+        }
+    }
+
     const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
     defer out_file.close(io);
 
