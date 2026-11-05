@@ -193,7 +193,6 @@ fn e2m1ByteTableF16(comptime shift: u4) @Vector(16, u8) {
     var t: [16]u8 = undefined;
     for (&t, e2m1_table_f16) |*x, f| {
         const bits: u16 = @bitCast(f);
-        std.debug.assert(bits & 0xFFFF == 0);
         x.* = @truncate(bits >> shift);
     }
     return t;
@@ -392,7 +391,7 @@ fn e2m1RangeTbl(
 ) @Vector(n * 2, ty) {
     return switch (ty) {
         inline f32 => e2m1RangeTblF32(n, packed_bytes),
-        inline f16 => @panic("TODO: f16 support"),
+        inline f16 => e2m1RangeTblF16(n, packed_bytes),
         inline u16 => e2m1RangeTblBF16(n, packed_bytes),
         inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
@@ -415,6 +414,21 @@ fn e2m1RangeTblF32(
     }
     const bits: @Vector(n * 2, u32) = res;
     return @bitCast(bits);
+}
+
+fn e2m1RangeTblF16(
+    comptime n: comptime_int,
+    packed_bytes: *const [n]u8,
+) @Vector(n * 2, f16) {
+    comptime std.debug.assert(n * 2 % 16 == 0);
+    const bytes: @Vector(n, u8) = packed_bytes.*;
+    const nibbles: [n * 2]u8 = splitBytesIntoNibbles(n, bytes);
+    var res: [n * 2]u16 = undefined;
+    inline for (0..n * 2 / 16) |k| {
+        const idx: @Vector(16, u8) = nibbles[k * 16 ..][0..16].*;
+        res[k * 16 ..][0..16].* = decodeE2M1FromIndices(f16, idx);
+    }
+    return @bitCast(@as(@Vector(n * 2, u16), res));
 }
 
 fn e2m1RangeTblBF16(
