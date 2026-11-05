@@ -33,6 +33,8 @@ const all_configs: [config_count]nvfp4.DequantConfig = blk: {
     break :blk res;
 };
 
+const all_datatypes = [_]st.DataType{ .F32, .BF16, .F16 };
+
 const BenchRes = struct {
     duration: Io.Duration,
     bytes_read: usize,
@@ -63,9 +65,10 @@ const BenchRes = struct {
 
 fn getAllNVFP4Jobs(
     a: std.mem.Allocator,
+    dt: st.DataType,
     r: *const st.Registry,
 ) ![]job.Job {
-    const tensors = try nvfp4.getAllNVFP4Tensors(a, .F32, r);
+    const tensors = try nvfp4.getAllNVFP4Tensors(a, dt, r);
     defer a.free(tensors);
 
     var jobs = try a.alloc(job.Job, tensors.len);
@@ -92,6 +95,7 @@ fn freeJobs(a: std.mem.Allocator, jobs: []job.Job) void {
 fn benchmark(
     a: std.mem.Allocator,
     io: Io,
+    dt: st.DataType,
     filename: []const u8,
     config: nvfp4.DequantConfig,
 ) !BenchRes {
@@ -102,7 +106,7 @@ fn benchmark(
     var reg: st.Registry = try .fromPath(a, io, filename);
     defer reg.deinit();
 
-    const tensors = try nvfp4.getAllNVFP4Tensors(a, .F32, &reg);
+    const tensors = try nvfp4.getAllNVFP4Tensors(a, dt, &reg);
     defer a.free(tensors);
 
     const clock = Clock.awake;
@@ -208,6 +212,7 @@ fn loadTensorBytes(
 fn loadKernelInputs(
     a: std.mem.Allocator,
     io: Io,
+    dt: st.DataType,
     filename: []const u8,
 ) ![]KernelInput {
     var reg: st.Registry = try .fromPath(a, io, filename);
@@ -223,7 +228,7 @@ fn loadKernelInputs(
             t.key_ptr.*,
             ".weight_packed",
         ) orelse unreachable;
-        const val = try nvfp4.Tensor.fromRegistry(.F32, &reg, base) orelse
+        const val = try nvfp4.Tensor.fromRegistry(dt, &reg, base) orelse
             return error.MissingTensor;
         const global = try val.weight_global_scale.readScalar(io, f32);
         const bytes = try loadTensorBytes(a, io, val.weight_packed);
@@ -287,12 +292,14 @@ test "all benchmarks work with all configs" {
 
     var reg: st.Registry = try .fromPath(a, io, filename);
     defer reg.deinit();
-    const jobs = try getAllNVFP4Jobs(a, &reg);
-    defer freeJobs(a, jobs);
-    for (all_configs) |config| {
-        _ = try benchmark(a, io, filename, config);
-        _ = try benchmarkJobs(io, a, jobs, config);
-        _ = try benchmarkJobsSequentially(io, a, jobs, config);
+    for (all_datatypes) |dt| {
+        const jobs = try getAllNVFP4Jobs(a, dt, &reg);
+        defer freeJobs(a, jobs);
+        for (all_configs) |config| {
+            _ = try benchmark(a, io, dt, filename, config);
+            _ = try benchmarkJobs(io, a, jobs, config);
+            _ = try benchmarkJobsSequentially(io, a, jobs, config);
+        }
     }
 }
 
@@ -301,9 +308,10 @@ fn runBenchmark(
     config: nvfp4.DequantConfig,
     a: std.mem.Allocator,
     io: Io,
+    dt: st.DataType,
     filename: []const u8,
 ) !BenchRes {
-    const res = try self.run(config, a, io, filename);
+    const res = try self.run(config, a, io, dt, filename);
     const name = self.name();
     print("{s} benchmark: {f}\n", .{ name, res });
     return res;
@@ -335,6 +343,7 @@ const Benchmark = union(enum) {
         config: nvfp4.DequantConfig,
         a: std.mem.Allocator,
         io: Io,
+        dt: st.DataType,
         filename: []const u8,
     ) !BenchRes {
         switch (self) {
@@ -344,22 +353,23 @@ const Benchmark = union(enum) {
                 const inputs = try loadKernelInputs(
                     arena.allocator(),
                     io,
+                    dt,
                     filename,
                 );
                 return try kernelBenchmark(io, inputs, config, info.out);
             },
-            .regular => return try benchmark(a, io, filename, config),
+            .regular => return try benchmark(a, io, dt, filename, config),
             .jobs => {
                 var reg: st.Registry = try .fromPath(a, io, filename);
                 defer reg.deinit();
-                const jobs = try getAllNVFP4Jobs(a, &reg);
+                const jobs = try getAllNVFP4Jobs(a, dt, &reg);
                 defer freeJobs(a, jobs);
                 return try benchmarkJobs(io, a, jobs, config);
             },
             .jobs_seq => {
                 var reg: st.Registry = try .fromPath(a, io, filename);
                 defer reg.deinit();
-                const jobs = try getAllNVFP4Jobs(a, &reg);
+                const jobs = try getAllNVFP4Jobs(a, dt, &reg);
                 defer freeJobs(a, jobs);
                 return try benchmarkJobsSequentially(io, a, jobs, config);
             },
@@ -388,12 +398,14 @@ pub fn main() !void {
         .regular,
     };
 
-    const warmup = 3;
+    const warmup = 1;
 
     for (0..warmup) |_| {
-        for (all_benchmarks) |b| {
-            for (all_configs) |config| {
-                _ = try b.run(config, a, io, filename);
+        for (all_datatypes) |dt| {
+            for (all_benchmarks) |b| {
+                for (all_configs) |config| {
+                    _ = try b.run(config, a, io, dt, filename);
+                }
             }
         }
     }
@@ -401,26 +413,31 @@ pub fn main() !void {
     var min_b: Benchmark = undefined;
     var min_config: nvfp4.DequantConfig = undefined;
     var min_res: BenchRes = undefined;
+    var min_dt: st.DataType = undefined;
 
     var first = true;
     for (all_benchmarks) |b| {
-        for (all_configs) |config| {
-            print("Config = {}\n", .{config});
-            const res = try runBenchmark(b, config, a, io, filename);
-            const r = res.duration.toMilliseconds();
-            const rm = min_res.duration.toMilliseconds();
-            if (first or r < rm) {
-                min_b = b;
-                min_config = config;
-                min_res = res;
+        for (all_datatypes) |dt| {
+            for (all_configs) |config| {
+                print("Config = {}\n", .{config});
+                const res = try runBenchmark(b, config, a, io, dt, filename);
+                const r = res.duration.toMilliseconds();
+                const rm = min_res.duration.toMilliseconds();
+                if (first or r < rm) {
+                    min_b = b;
+                    min_config = config;
+                    min_res = res;
+                    min_dt = dt;
+                }
+                print("\n", .{});
+                if (first) first = false;
             }
-            print("\n", .{});
-            if (first) first = false;
         }
     }
 
     print("----------------------------------\n", .{});
     print("Best results:\n", .{});
+    print("Datatype = {}\n", .{min_dt});
     print("Config = {}\n", .{min_config});
     print("{s} benchmark: {f}\n", .{ min_b.name(), min_res });
 }

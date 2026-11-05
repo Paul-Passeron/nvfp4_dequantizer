@@ -254,7 +254,7 @@ inline fn merge2U8aAsU16(
     return @bitCast(@shuffle(u8, lo, hi, interleaveMask(n)));
 }
 
-fn decodeE2M1FromIndicesType(comptime ty: type) type {
+fn correspondingUnsignedType(comptime ty: type) type {
     return switch (ty) {
         inline f32 => u32,
         inline u16 => u16,
@@ -263,7 +263,7 @@ fn decodeE2M1FromIndicesType(comptime ty: type) type {
     };
 }
 
-inline fn decodeE2M1FromIndices(comptime ty: type, idx: @Vector(16, u8)) @Vector(16, decodeE2M1FromIndicesType(ty)) {
+inline fn decodeE2M1FromIndices(comptime ty: type, idx: @Vector(16, u8)) @Vector(16, correspondingUnsignedType(ty)) {
     switch (ty) {
         inline f32 => {
             const b3 = tbl(e2m1_byte3_table, idx);
@@ -274,8 +274,7 @@ inline fn decodeE2M1FromIndices(comptime ty: type, idx: @Vector(16, u8)) @Vector
         inline u16 => {
             const b3 = tbl(e2m1_byte3_table, idx);
             const b2 = tbl(e2m1_byte2_table, idx);
-            const hi16 = merge2U8aAsU16(16, b2, b3);
-            return hi16;
+            return merge2U8aAsU16(16, b2, b3);
         },
         inline f16 => {
             const b1 = tbl(e2m1_byte1_table_f16, idx);
