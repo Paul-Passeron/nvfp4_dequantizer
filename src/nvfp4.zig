@@ -405,7 +405,7 @@ fn e2m1Range(
     comptime n: comptime_int,
     algo: e2m1Alg,
     packed_bytes: *const [n]u8,
-) @Vector(n * 2, f32) {
+) @Vector(n * 2, ty) {
     return switch (algo) {
         .bits => e2m1RangeBits(ty, n, packed_bytes),
         .look_up_table => e2m1RangeLookUpTable(ty, n, packed_bytes),
@@ -573,36 +573,33 @@ const e4m3_table: [256]f32 = blk: {
     break :blk t;
 };
 
-inline fn dequantBlocksF32(
-    comptime B: comptime_int,
-    config: DequantConfig,
-    packed_bytes: *const [B * 8]u8,
-    scales: *const [B]u8,
-    inv_global: f32,
-    out: *align(1) [B * 16]f32,
-) void {
-    const dequantized = e2m1Range(f32, B * 8, config.e2m1, packed_bytes);
-    const scale_vector = e4m3Range(B, config.e4m3, scales, inv_global);
-    const broadcasted = broadcast(B, 16, f32, scale_vector);
-    const res = dequantized * broadcasted;
-    out.* = res;
+inline fn operationToDequantBlocks(
+    comptime ty: type,
+    comptime n: comptime_int,
+    val: @Vector(n, f32),
+) @Vector(n, ty) {
+    return switch (ty) {
+        inline f32 => val,
+        inline f16 => @floatCast(val),
+        inline u16 => @truncate(@as(@Vector(n, u32), @bitCast(val))),
+        inline else => unreachable,
+    };
 }
 
-inline fn dequantBlocksBF16(
+inline fn dequantBlocks(
+    comptime ty: type,
     comptime B: comptime_int,
     config: DequantConfig,
     packed_bytes: *const [B * 8]u8,
     scales: *const [B]u8,
     inv_global: f32,
-    out: *align(1) [B * 16]u16,
+    out: *align(1) [B * 16]ty,
 ) void {
-    const dequantized = e2m1Range(u16, B * 8, config.e2m1, packed_bytes);
+    const dequantized = e2m1Range(ty, B * 8, config.e2m1, packed_bytes);
     const scale_vector = e4m3Range(B, config.e4m3, scales, inv_global);
     const broadcasted = broadcast(B, 16, f32, scale_vector);
     const res = dequantized * broadcasted;
-    const as_u32: @Vector(B * 16, u32) = @bitCast(res);
-    const trunc: @Vector(B * 16, u16) = @truncate(as_u32);
-    out.* = trunc;
+    out.* = operationToDequantBlocks(ty, B * 16, res);
 }
 
 const lengths_size: comptime_int = blk: {
@@ -624,56 +621,6 @@ const vec_lengths: [lengths_size]u32 = blk: {
     break :blk res;
 };
 
-fn dequantRangeSimdF32(
-    config: DequantConfig,
-    packed_bytes: []const u8,
-    scales: []const u8,
-    inv_global: f32,
-    out: []align(1) f32,
-) void {
-    var remaining_blocks: usize = scales.len;
-    inline for (vec_lengths) |C| {
-        while (remaining_blocks >= C) {
-            const current_block = scales.len - remaining_blocks;
-            dequantBlocksF32(
-                C,
-                config,
-                packed_bytes[current_block * 8 ..][0 .. C * 8],
-                scales[current_block..][0..C],
-                inv_global,
-                out[current_block * 16 ..][0 .. C * 16],
-            );
-            remaining_blocks -= C;
-        }
-        if (remaining_blocks == 0) return;
-    }
-}
-
-fn dequantRangeSimdBF16(
-    config: DequantConfig,
-    packed_bytes: []const u8,
-    scales: []const u8,
-    inv_global: f32,
-    out: []align(1) u16,
-) void {
-    var remaining_blocks: usize = scales.len;
-    inline for (vec_lengths) |C| {
-        while (remaining_blocks >= C) {
-            const current_block = scales.len - remaining_blocks;
-            dequantBlocksBF16(
-                C,
-                config,
-                packed_bytes[current_block * 8 ..][0 .. C * 8],
-                scales[current_block..][0..C],
-                inv_global,
-                out[current_block * 16 ..][0 .. C * 16],
-            );
-            remaining_blocks -= C;
-        }
-        if (remaining_blocks == 0) return;
-    }
-}
-
 fn dequantRangeSimd(
     comptime ty: type,
     config: DequantConfig,
@@ -682,14 +629,22 @@ fn dequantRangeSimd(
     inv_global: f32,
     out: []align(1) ty,
 ) void {
-    switch (ty) {
-        inline f32 => dequantRangeSimdF32(config, packed_bytes, scales, inv_global, out),
-        inline f16 => @panic("TODO"),
-        inline u16 => dequantRangeSimdBF16(config, packed_bytes, scales, inv_global, out),
-        inline else => @compileError(
-            "Expected type to be f32, f16 or u16, but got " ++
-                @typeName(ty),
-        ),
+    var remaining_blocks: usize = scales.len;
+    inline for (vec_lengths) |C| {
+        while (remaining_blocks >= C) {
+            const current_block = scales.len - remaining_blocks;
+            dequantBlocks(
+                ty,
+                C,
+                config,
+                packed_bytes[current_block * 8 ..][0 .. C * 8],
+                scales[current_block..][0..C],
+                inv_global,
+                out[current_block * 16 ..][0 .. C * 16],
+            );
+            remaining_blocks -= C;
+        }
+        if (remaining_blocks == 0) return;
     }
 }
 
