@@ -62,7 +62,7 @@ const e2m1_table_bf16: [16]u16 = blk: {
     var table: [16]u16 = undefined;
     for (&table, e2m1_table_f32) |*v, x| {
         const as_u32: u32 = @bitCast(x);
-        const truncated: u16 = @truncate(as_u32);
+        const truncated: u16 = @truncate(as_u32 >> 16);
         v.* = @bitCast(truncated);
     }
 
@@ -132,11 +132,15 @@ pub fn dequantBlockToF32Vector(
     return @as(V, out) * splat(V, scale_f);
 }
 
-pub fn dequantBlockCastOp(comptime ty: type, v: @Vector(16, f32)) @Vector(16, ty) {
+pub fn dequantBlockCastOp(
+    comptime ty: type,
+    comptime n: comptime_int,
+    v: @Vector(n, f32),
+) @Vector(n, ty) {
     return switch (ty) {
         inline f32 => v,
         inline f16 => @floatCast(v),
-        inline u16 => @truncate(@as(@Vector(16, u32), @bitCast(v)) >> splat(@Vector(16, u5), 16)),
+        inline u16 => @truncate(@as(@Vector(n, u32), @bitCast(v)) >> splat(@Vector(n, u5), 16)),
         inline else => @compileError(
             "Expected type to be f32, f16 or u16, but got " ++
                 @typeName(ty),
@@ -152,7 +156,7 @@ pub fn dequantBlock(
     out: *align(1) [16]ty,
 ) void {
     const v = dequantBlockToF32Vector(packed_bytes, scale, inv_global);
-    out.* = dequantBlockCastOp(ty, v);
+    out.* = dequantBlockCastOp(ty, 16, v);
 }
 
 fn checkDequantRangeInput(
@@ -620,18 +624,18 @@ const e4m3_table: [256]f32 = blk: {
     break :blk t;
 };
 
-inline fn operationToDequantBlocks(
-    comptime ty: type,
-    comptime n: comptime_int,
-    val: @Vector(n, f32),
-) @Vector(n, ty) {
-    return switch (ty) {
-        inline f32 => val,
-        inline f16 => @floatCast(val),
-        inline u16 => @truncate(@as(@Vector(n, u32), @bitCast(val))),
-        inline else => unreachable,
-    };
-}
+// inline fn operationToDequantBlocks(
+//     comptime ty: type,
+//     comptime n: comptime_int,
+//     val: @Vector(n, f32),
+// ) @Vector(n, ty) {
+//     return switch (ty) {
+//         inline f32 => val,
+//         inline f16 => @floatCast(val),
+//         inline u16 => @truncate(@as(@Vector(n, u32), @bitCast(val)) >> ),
+//         inline else => unreachable,
+//     };
+// }
 
 inline fn dequantBlocks(
     comptime ty: type,
@@ -642,11 +646,11 @@ inline fn dequantBlocks(
     inv_global: f32,
     out: *align(1) [B * 16]ty,
 ) void {
-    const dequantized = e2m1Range(ty, B * 8, config.e2m1, packed_bytes);
+    const dequantized = e2m1Range(f32, B * 8, config.e2m1, packed_bytes);
     const scale_vector = e4m3Range(B, config.e4m3, scales, inv_global);
     const broadcasted = broadcast(B, 16, f32, scale_vector);
     const res = dequantized * broadcasted;
-    out.* = operationToDequantBlocks(ty, B * 16, res);
+    out.* = dequantBlockCastOp(ty, B * 16, res);
 }
 
 const lengths_size: comptime_int = blk: {
