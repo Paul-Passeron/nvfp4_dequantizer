@@ -398,39 +398,30 @@ pub fn main() !void {
         .regular,
     };
 
-    const warmup = 1;
-
-    for (0..warmup) |_| {
-        for (all_datatypes) |dt| {
-            for (all_benchmarks) |b| {
-                for (all_configs) |config| {
-                    _ = try b.run(config, a, io, dt, filename);
-                }
-            }
-        }
-    }
-
     var min_b: Benchmark = undefined;
     var min_config: nvfp4.DequantConfig = undefined;
     var min_res: BenchRes = undefined;
     var min_dt: st.DataType = undefined;
+    const warmup = 2;
 
     var first = true;
     for (all_benchmarks) |b| {
         for (all_datatypes) |dt| {
             for (all_configs) |config| {
                 print("Config = {}\n", .{config});
-                const res = try runBenchmark(b, config, a, io, dt, filename);
-                const r = res.duration.toMilliseconds();
-                const rm = min_res.duration.toMilliseconds();
-                if (first or r < rm) {
-                    min_b = b;
-                    min_config = config;
-                    min_res = res;
-                    min_dt = dt;
+                for (0..warmup) |_| {
+                    const res = try runBenchmark(b, config, a, io, dt, filename);
+                    const r = res.duration.toMilliseconds();
+                    const rm = min_res.duration.toMilliseconds();
+                    if (first or r < rm) {
+                        min_b = b;
+                        min_config = config;
+                        min_res = res;
+                        min_dt = dt;
+                    }
+                    print("\n", .{});
+                    if (first) first = false;
                 }
-                print("\n", .{});
-                if (first) first = false;
             }
         }
     }
