@@ -4,7 +4,7 @@ const nvfp4 = @import("nvfp4");
 const job = @import("job");
 const builtin = @import("builtin");
 
-const usage =
+const usage_message =
     \\usage: nvfp4 [options] <input>
     \\
     \\Options:
@@ -18,15 +18,6 @@ const Options = struct {
     out: []const u8 = "out.safetensors",
     datatype: st.DataType = .F32,
 };
-
-const ParseError = error{
-    MultipleInputs,
-    MissingInput,
-    UnknownOption,
-    MissingValue,
-    InvalidValue,
-    HelpRequested,
-} || std.mem.Allocator.Error;
 
 fn splitEq(arg: []const u8) struct { name: []const u8, value: ?[]const u8 } {
     if (std.mem.startsWith(u8, arg, "--")) {
@@ -44,22 +35,6 @@ fn isOption(
 ) bool {
     return std.mem.eql(u8, name, short) or
         std.mem.eql(u8, name, long);
-}
-
-fn takeValue(
-    args: []const [:0]const u8,
-    i: *usize,
-    inline_value: ?[]const u8,
-    name: []const u8,
-    err: *std.Io.Writer,
-) ParseError![]const u8 {
-    if (inline_value) |v| return v;
-    if (i.* + 1 >= args.len) {
-        failMessage(err, "{s} requires a value", .{name});
-        return error.MissingValue;
-    }
-    i.* += 1;
-    return args[i.*];
 }
 
 fn comptimeLowerCased(comptime s: []const u8) [s.len]u8 {
@@ -84,48 +59,6 @@ fn parseEnumLitMayBeLowercased(comptime t: type, from: []const u8) ?t {
             return @fromBackingInt(@intCast(value));
     }
     return null;
-}
-
-fn parseArgs(
-    args: []const [:0]const u8,
-    err: *std.Io.Writer,
-) ParseError!Options {
-    var opts: Options = .{ .in = "" };
-    var i: usize = 1;
-    var input_set = false;
-    while (i < args.len) : (i += 1) {
-        const raw = args[i];
-        if (raw.len < 2 or raw[0] != '-') {
-            if (input_set)
-                return ParseError.MultipleInputs;
-            input_set = true;
-            opts.in = raw;
-            continue;
-        }
-
-        const arg = splitEq(raw);
-        if (isOption(arg.name, "-h", "--help")) {
-            return ParseError.HelpRequested;
-        } else if (isOption(arg.name, "-o", "--output")) {
-            opts.out = try takeValue(args, &i, arg.value, arg.name, err);
-        } else if (isOption(arg.name, "-d", "--datatype")) {
-            const dt = try takeValue(args, &i, arg.value, arg.name, err);
-            // Kind of over-engineered since we will only accept f32, f16
-            // and bf16 but I wanted to try out zig comptime reflection
-            // a bit.
-            if (parseEnumLitMayBeLowercased(st.DataType, dt)) |val| {
-                opts.datatype = val;
-            } else {
-                failMessage(err, "Invalid datatype `{s}`", .{dt});
-                return ParseError.InvalidValue;
-            }
-        } else {
-            failMessage(err, "unknown option `{s}`", .{arg.name});
-            return ParseError.UnknownOption;
-        }
-    }
-    if (!input_set) return ParseError.MissingInput;
-    return opts;
 }
 
 const Layout = struct {
@@ -325,101 +258,212 @@ fn writeDequantizedFile(
     return total_file_size;
 }
 
-pub fn main(init: std.process.Init) !void {
-    const allocator = init.gpa;
-    const io = init.io;
+const Cli = struct {
+    io: std.Io,
+    allocator: std.mem.Allocator,
+
+    out_buf: []u8,
+    out_writer: std.Io.File.Writer,
+
+    err_buf: []u8,
+    err_writer: std.Io.File.Writer,
+
+    fn init(from: std.process.Init) !Cli {
+        const allocator = from.gpa;
+        const io = from.io;
+
+        const out_buf = try allocator.alloc(u8, 1024 * 1024);
+        errdefer allocator.free(out_buf);
+        const out_writer = std.Io.File.stdout().writerStreaming(io, out_buf);
+
+        const err_buf = try allocator.alloc(u8, 1024 * 1024);
+        errdefer allocator.free(err_buf);
+        const err_writer = std.Io.File.stderr().writerStreaming(io, err_buf);
+
+        return .{
+            .io = io,
+            .allocator = allocator,
+            .out_buf = out_buf,
+            .out_writer = out_writer,
+            .err_buf = err_buf,
+            .err_writer = err_writer,
+        };
+    }
+
+    fn deinit(self: *Cli) void {
+        self.err_writer.flush() catch {};
+        self.out_writer.flush() catch {};
+
+        self.allocator.free(self.err_buf);
+        self.allocator.free(self.out_buf);
+    }
+
+    fn print(
+        self: *Cli,
+        comptime fmt: []const u8,
+        args: anytype,
+    ) !void {
+        try self.out_writer.interface.print(fmt, args);
+        try self.out_writer.flush();
+    }
+
+    fn usage(
+        self: *Cli,
+    ) !void {
+        try self.err_writer.interface.print(usage_message ++ "\n", .{});
+        try self.err_writer.flush();
+    }
+
+    fn fail(
+        self: *Cli,
+        comptime fmt: []const u8,
+        args: anytype,
+    ) anyerror {
+        try self.err_writer.interface.print("error: " ++ fmt ++ "\n", args);
+        try self.err_writer.flush();
+        return error.CloseProgramWithError;
+    }
+
+    fn takeValue(
+        self: *Cli,
+        args: []const [:0]const u8,
+        i: *usize,
+        inline_value: ?[]const u8,
+        name: []const u8,
+    ) ![]const u8 {
+        if (inline_value) |v| return v;
+        if (i.* + 1 >= args.len) {
+            const err = self.fail("{s} requires a value", .{name});
+            try self.usage();
+            return err;
+        }
+        i.* += 1;
+        return args[i.*];
+    }
+
+    fn validateOpts(self: *Cli, opts: Options) !void {
+        switch (opts.datatype) {
+            .BF16, .F16, .F32 => {},
+            else => return self.fail(
+                "unsupported datatype `{}`, expected F32, F16 or BF16.",
+                .{opts.datatype},
+            ),
+        }
+
+        if (arePathsTheSame(self.io, opts.in, opts.out)) {
+            return self.fail(
+                "input and output files are the same: `{s}`",
+                .{opts.in},
+            );
+        }
+    }
+
+    fn getOpts(self: *Cli, args: []const [:0]const u8) !Options {
+        const opts = try self.parseArgs(args);
+        try self.validateOpts(opts);
+        return opts;
+    }
+
+    fn parseArgs(self: *Cli, args: []const [:0]const u8) !Options {
+        var opts: Options = .{ .in = "" };
+        var i: usize = 1;
+        var input_set = false;
+        while (i < args.len) : (i += 1) {
+            const raw = args[i];
+            if (raw.len < 2 or raw[0] != '-') {
+                if (input_set)
+                    return self.fail("too many input file paths", .{});
+                input_set = true;
+                opts.in = raw;
+                continue;
+            }
+
+            const arg = splitEq(raw);
+            if (isOption(arg.name, "-h", "--help")) {
+                return error.HelpRequested;
+            } else if (isOption(arg.name, "-o", "--output")) {
+                opts.out = try self.takeValue(args, &i, arg.value, arg.name);
+            } else if (isOption(arg.name, "-d", "--datatype")) {
+                const dt = try self.takeValue(args, &i, arg.value, arg.name);
+                // Kind of over-engineered since we will only accept f32, f16
+                // and bf16 but I wanted to try out zig comptime reflection
+                // a bit.
+                if (parseEnumLitMayBeLowercased(st.DataType, dt)) |val| {
+                    opts.datatype = val;
+                } else {
+                    return self.fail("Invalid datatype `{s}`", .{dt});
+                }
+            } else {
+                return self.fail("unknown option `{s}`", .{arg.name});
+            }
+        }
+        if (!input_set)
+            return self.fail("missing input file path", .{});
+        return opts;
+    }
+
+    fn getRegistry(self: *Cli, opts: Options) !st.Registry {
+        return .fromPath(self.allocator, self.io, opts.in);
+    }
+
+    fn runImpl(self: *Cli, args: []const [:0]const u8) !void {
+        const opts = try self.getOpts(args);
+
+        const input_file_size = try fileSize(self.io, opts.in);
+
+        var r = try self.getRegistry(opts);
+        defer r.deinit();
+
+        var layout = try Layout.fromRegistry(self.allocator, opts.datatype, &r);
+        defer layout.deinit(self.allocator);
+
+        const clock = std.Io.Clock.awake;
+        const start_time = clock.now(self.io);
+
+        const out_file = try std.Io.Dir.cwd().createFile(
+            self.io,
+            opts.out,
+            .{},
+        );
+        defer out_file.close(self.io);
+
+        const total_file_size =
+            try writeDequantizedFile(self.io, self.allocator, &out_file, &layout);
+
+        const duration = start_time.durationTo(clock.now(self.io));
+
+        try self.print("in:  `{s}`\n", .{opts.in});
+        try self.print("out: `{s}`\n", .{opts.out});
+        try self.print("dt: {}\n", .{opts.datatype});
+        try self.print("read \t{} bytes\nwrote \t{} bytes\ntime: {f}.\n", .{
+            input_file_size,
+            total_file_size,
+            duration,
+        });
+    }
+
+    fn run(self: *Cli, args: []const [:0]const u8) !void {
+        self.runImpl(args) catch |err| switch (err) {
+            error.HelpRequested => try self.usage(),
+            error.CloseProgramWithError => return err,
+            else => return self.fail("{}", .{err}),
+        };
+    }
+};
+
+pub fn mainImpl(init: std.process.Init) !u8 {
+    var cli: Cli = try .init(init);
+    defer cli.deinit();
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-
-    var out_buf: [4096]u8 = undefined;
-    var out_writer = std.Io.File.stdout().writerStreaming(io, &out_buf);
-    const out = &out_writer.interface;
-
-    var err_buf: [4096]u8 = undefined;
-    var err_writer = std.Io.File.stderr().writerStreaming(io, &err_buf);
-    const err = &err_writer.interface;
-
-    const clock = std.Io.Clock.awake;
-    const start_time = clock.now(io);
-
-    const opts = parseArgs(args, err) catch |e| switch (e) {
-        error.HelpRequested => {
-            err.print(usage ++ "\n", .{}) catch {};
-            try err.flush();
-            return;
-        },
-        error.OutOfMemory => return e,
-        else => fail(err),
+    cli.run(args) catch |err| switch (err) {
+        error.CloseProgramWithError => return 2,
+        else => unreachable,
     };
 
-    switch (opts.datatype) {
-        .BF16, .F16, .F32 => {},
-        else => {
-            failMessage(
-                err,
-                "Unsupported datatype `{}`, expected F32, F16 or BF16.",
-                .{opts.datatype},
-            );
-            std.process.exit(2);
-        },
-    }
-
-    try out.print("in:  `{s}`\n", .{opts.in});
-    try out.print("out: `{s}`\n", .{opts.out});
-    try out.print("dt: {}\n", .{opts.datatype});
-
-    var r = st.Registry.fromPath(allocator, io, opts.in) catch |e| {
-        failMessage(err, "could not load safetensors file at `{s}`: {}", .{
-            opts.in,
-            e,
-        });
-        fail(err);
-    };
-    defer r.deinit();
-
-    var layout = try Layout.fromRegistry(allocator, opts.datatype, &r);
-    defer layout.deinit(allocator);
-
-    if (arePathsTheSame(io, opts.in, opts.out)) {
-        failMessage(
-            err,
-            "Input and output files are the same: `{s}`",
-            .{opts.in},
-        );
-        std.process.exit(2);
-    }
-
-    const out_file = try std.Io.Dir.cwd().createFile(io, opts.out, .{});
-    defer out_file.close(io);
-
-    const total_file_size =
-        try writeDequantizedFile(io, allocator, &out_file, &layout);
-
-    const end_time = clock.now(io);
-    const duration = start_time.durationTo(end_time);
-
-    const input_file_size = try fileSize(io, opts.in);
-
-    try out.print("read \t{} bytes\nwrote \t{} bytes\ntime: {f}.\n", .{
-        input_file_size,
-        total_file_size,
-        duration,
-    });
-
-    try out.flush();
+    return 0;
 }
 
-fn failMessage(
-    err: *std.Io.Writer,
-    comptime fmt: []const u8,
-    args: anytype,
-) void {
-    err.print("error: " ++ fmt ++ "\n", args) catch {};
-    err.flush() catch {};
-}
-
-fn fail(err: *std.Io.Writer) noreturn {
-    err.print(usage ++ "\n", .{}) catch {};
-    err.flush() catch {};
-    std.process.exit(2);
+pub fn main(init: std.process.Init) !void {
+    std.process.exit(try mainImpl(init));
 }
