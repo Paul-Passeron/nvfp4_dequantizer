@@ -10,8 +10,8 @@ const usage_message =
     \\Options:
     \\  -o, --output <path>           Output file                       (default: out.safetensors)
     \\  -d, --datatype <f32|f16|bf16> Output type                       (default: f32)
-    \\      --e2m1 <tbl|lut|bits>     Set e2m1 dequantisation algorithm (default: tbl on aarch64, lut on other platforms)
-    \\      --e4m3 <lut|bits>         Set e4m3 dequantisation algorithm (default: lut)
+    \\      --e2m1 <tbl|lut|bits>     Set e2m1 dequantization algorithm (default: tbl on aarch64, lut on other platforms)
+    \\      --e4m3 <lut|bits>         Set e4m3 dequantization algorithm (default: lut)
     \\      --dequant <simd|seq>      Set dequantization parallelism    (default: simd)
     \\  -h, --help                    Show this help
 ;
