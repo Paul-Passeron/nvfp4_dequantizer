@@ -65,5 +65,15 @@ defer reader.deinit();
 _ = try reader.interface.streamRemaining(writer);
 ```
 
+## Models
+
 The models aren't included in the repo.
 Tests and benchmarks use `nvfp4/model.safetensors`, and the tests also compare against `converted_f32/model-00001-of-00001.safetensors` which was computed from `nvfp4/model.safetensors`.
+
+To get them, in the repo root:
+```sh
+hf download ardge-hf/Qwen3-Reranker-0.6B-NVFP4 --local-dir nvfp4
+```
+```sh
+llm-dequant convert nvfp4 converted_f32 --dtype fp32
+```
