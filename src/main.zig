@@ -496,7 +496,7 @@ const Cli = struct {
         try self.print("dequant: {}\n", .{opts.dequant_algo});
         try self.print("read  \t{} bytes\n", .{input_file_size});
         try self.print("wrote \t{} bytes\n", .{total_file_size});
-        try self.print("took  \t{f} bytes\n", .{duration});
+        try self.print("took  \t{f}\n", .{duration});
     }
 
     fn run(self: *Cli, args: []const [:0]const u8) !void {
