@@ -434,7 +434,10 @@ const Cli = struct {
     }
 
     fn getRegistry(self: *Cli, opts: Options) !st.Registry {
-        return .fromPath(self.allocator, self.io, opts.in);
+        return st.Registry.fromPath(self.allocator, self.io, opts.in) catch |err| switch (err) {
+            error.FileNotFound => self.fail("file not found: `{s}`", .{opts.in}),
+            else => err,
+        };
     }
 
     fn writeDequantizedFile(
