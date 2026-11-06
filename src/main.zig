@@ -8,8 +8,11 @@ const usage_message =
     \\usage: nvfp4 [options] <input>
     \\
     \\Options:
-    \\  -o, --output <path>           Output file     (default: out.safetensors)
-    \\  -d, --datatype <f32|f16|bf16> Output type     (default: f32)
+    \\  -o, --output <path>           Output file                       (default: out.safetensors)
+    \\  -d, --datatype <f32|f16|bf16> Output type                       (default: f32)
+    \\      --e2m1 <tbl|lut|bits>     Set e2m1 dequantisation algorithm (default: tbl on aarch64, lut on other platforms)
+    \\      --e4m3 <lut|bits>         Set e4m3 dequantisation algorithm (default: lut)
+    \\      --dequant <simd|seq>      Set dequantization parallelism    (default: simd)
     \\  -h, --help                    Show this help
 ;
 
@@ -17,6 +20,17 @@ const Options = struct {
     in: []const u8,
     out: []const u8 = "out.safetensors",
     datatype: st.DataType = .F32,
+    dequant_algo: nvfp4.DequantAlgo = .simd,
+    e2m1: nvfp4.e2m1Alg = nvfp4.default_e2m1_algo,
+    e4m3: nvfp4.e4m3Alg = nvfp4.default_e4m3_algo,
+
+    fn config(self: Options) nvfp4.DequantConfig {
+        return .{
+            .dequant = self.dequant_algo,
+            .e2m1 = self.e2m1,
+            .e4m3 = self.e4m3,
+        };
+    }
 };
 
 fn splitEq(arg: []const u8) struct { name: []const u8, value: ?[]const u8 } {
@@ -30,11 +44,13 @@ fn splitEq(arg: []const u8) struct { name: []const u8, value: ?[]const u8 } {
 
 fn isOption(
     name: []const u8,
-    short: []const u8,
+    short: ?[]const u8,
     long: []const u8,
 ) bool {
-    return std.mem.eql(u8, name, short) or
-        std.mem.eql(u8, name, long);
+    if (short) |s|
+        if (std.mem.eql(u8, name, s))
+            return true;
+    return std.mem.eql(u8, name, long);
 }
 
 fn comptimeLowerCased(comptime s: []const u8) [s.len]u8 {
@@ -233,31 +249,6 @@ fn fileSize(io: std.Io, path: []const u8) !u64 {
     return stat.size;
 }
 
-fn writeDequantizedFile(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    out_file: *const std.Io.File,
-    layout: *const Layout,
-) !u64 {
-    var f_buffer: [32 * 1024]u8 = undefined;
-    var f_writer = out_file.writer(io, &f_buffer);
-
-    const header_bytes = try layout.writeHeader(&f_writer);
-    const total_header_bytes = 8 + header_bytes;
-    const total_file_size = total_header_bytes + layout.total_byte_len;
-
-    try out_file.setLength(io, total_file_size);
-
-    const jobs = try layout.getJobs(allocator, out_file, total_header_bytes);
-    defer deinitJobs(allocator, jobs);
-
-    try job.runAllJobs(io, allocator, .{ .dequant = .simd }, jobs);
-
-    try f_writer.flush();
-
-    return total_file_size;
-}
-
 const Cli = struct {
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -324,6 +315,17 @@ const Cli = struct {
         return error.CloseProgramWithError;
     }
 
+    fn failWithUsage(
+        self: *Cli,
+        comptime fmt: []const u8,
+        args: anytype,
+    ) anyerror {
+        try self.err_writer.interface.print("error: " ++ fmt ++ "\n", args);
+        try self.err_writer.flush();
+        try self.usage();
+        return error.CloseProgramWithError;
+    }
+
     fn takeValue(
         self: *Cli,
         args: []const [:0]const u8,
@@ -383,6 +385,35 @@ const Cli = struct {
                 return error.HelpRequested;
             } else if (isOption(arg.name, "-o", "--output")) {
                 opts.out = try self.takeValue(args, &i, arg.value, arg.name);
+            } else if (isOption(arg.name, null, "--e2m1")) {
+                const val = try self.takeValue(args, &i, arg.value, arg.name);
+                if (std.mem.eql(u8, val, "lut")) {
+                    opts.e2m1 = .look_up_table;
+                } else if (std.mem.eql(u8, val, "tbl")) {
+                    opts.e2m1 = .tbl;
+                } else if (std.mem.eql(u8, val, "bits")) {
+                    opts.e2m1 = .bits;
+                } else {
+                    return self.failWithUsage("Invalid e2m1 algorithm `{s}`", .{val});
+                }
+            } else if (isOption(arg.name, null, "--e4m3")) {
+                const val = try self.takeValue(args, &i, arg.value, arg.name);
+                if (std.mem.eql(u8, val, "lut")) {
+                    opts.e4m3 = .look_up_table;
+                } else if (std.mem.eql(u8, val, "bits")) {
+                    opts.e4m3 = .bits;
+                } else {
+                    return self.failWithUsage("Invalid e4m3 algorithm `{s}`", .{val});
+                }
+            } else if (isOption(arg.name, null, "--dequant")) {
+                const val = try self.takeValue(args, &i, arg.value, arg.name);
+                if (std.mem.eql(u8, val, "simd")) {
+                    opts.dequant_algo = .simd;
+                } else if (std.mem.eql(u8, val, "seq")) {
+                    opts.dequant_algo = .sequential;
+                } else {
+                    return self.failWithUsage("Invalid dequantization algorithm `{s}`", .{val});
+                }
             } else if (isOption(arg.name, "-d", "--datatype")) {
                 const dt = try self.takeValue(args, &i, arg.value, arg.name);
                 // Kind of over-engineered since we will only accept f32, f16
@@ -391,19 +422,44 @@ const Cli = struct {
                 if (parseEnumLitMayBeLowercased(st.DataType, dt)) |val| {
                     opts.datatype = val;
                 } else {
-                    return self.fail("Invalid datatype `{s}`", .{dt});
+                    return self.failWithUsage("Invalid datatype `{s}`", .{dt});
                 }
             } else {
-                return self.fail("unknown option `{s}`", .{arg.name});
+                return self.failWithUsage("unknown option `{s}`", .{arg.name});
             }
         }
         if (!input_set)
-            return self.fail("missing input file path", .{});
+            return self.failWithUsage("missing input file path", .{});
         return opts;
     }
 
     fn getRegistry(self: *Cli, opts: Options) !st.Registry {
         return .fromPath(self.allocator, self.io, opts.in);
+    }
+
+    fn writeDequantizedFile(
+        self: *Cli,
+        opts: Options,
+        out_file: *const std.Io.File,
+        layout: *const Layout,
+    ) !u64 {
+        var f_buffer: [32 * 1024]u8 = undefined;
+        var f_writer = out_file.writer(self.io, &f_buffer);
+
+        const header_bytes = try layout.writeHeader(&f_writer);
+        const total_header_bytes = 8 + header_bytes;
+        const total_file_size = total_header_bytes + layout.total_byte_len;
+
+        try out_file.setLength(self.io, total_file_size);
+
+        const jobs = try layout.getJobs(self.allocator, out_file, total_header_bytes);
+        defer deinitJobs(self.allocator, jobs);
+
+        try job.runAllJobs(self.io, self.allocator, opts.config(), jobs);
+
+        try f_writer.flush();
+
+        return total_file_size;
     }
 
     fn runImpl(self: *Cli, args: []const [:0]const u8) !void {
@@ -428,18 +484,19 @@ const Cli = struct {
         defer out_file.close(self.io);
 
         const total_file_size =
-            try writeDequantizedFile(self.io, self.allocator, &out_file, &layout);
+            try self.writeDequantizedFile(opts, &out_file, &layout);
 
         const duration = start_time.durationTo(clock.now(self.io));
 
         try self.print("in:  `{s}`\n", .{opts.in});
         try self.print("out: `{s}`\n", .{opts.out});
         try self.print("dt: {}\n", .{opts.datatype});
-        try self.print("read \t{} bytes\nwrote \t{} bytes\ntime: {f}.\n", .{
-            input_file_size,
-            total_file_size,
-            duration,
-        });
+        try self.print("e2m1: {}\n", .{opts.e2m1});
+        try self.print("e4m3: {}\n", .{opts.e4m3});
+        try self.print("dequant: {}\n", .{opts.dequant_algo});
+        try self.print("read  \t{} bytes\n", .{input_file_size});
+        try self.print("wrote \t{} bytes\n", .{total_file_size});
+        try self.print("took  \t{f} bytes\n", .{duration});
     }
 
     fn run(self: *Cli, args: []const [:0]const u8) !void {

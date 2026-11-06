@@ -8,7 +8,7 @@ pub const e4m3Alg = enum { look_up_table, bits };
 
 pub const DequantAlgo = enum { sequential, simd };
 
-const default_e2m1_algo: e2m1Alg = blk: {
+pub const default_e2m1_algo: e2m1Alg = blk: {
     if (builtin.cpu.arch == .aarch64) {
         break :blk .tbl;
     } else {
@@ -16,7 +16,7 @@ const default_e2m1_algo: e2m1Alg = blk: {
     }
 };
 
-const default_e4m3_algo: e4m3Alg = .look_up_table;
+pub const default_e4m3_algo: e4m3Alg = .look_up_table;
 
 pub const DequantConfig = struct {
     e2m1: e2m1Alg = default_e2m1_algo,

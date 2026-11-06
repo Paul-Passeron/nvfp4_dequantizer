@@ -22,14 +22,17 @@ That installs `nvfp4` and `benchmarks` into `zig-out/bin/`.
 usage: nvfp4 [options] <input>
 
 Options:
-  -o, --output <path>           Output file     (default: out.safetensors)
-  -d, --datatype <f32|f16|bf16> Output type     (default: f32)
+  -o, --output <path>           Output file                       (default: out.safetensors)
+  -d, --datatype <f32|f16|bf16> Output type                       (default: f32)
+      --e2m1 <tbl|lut|bits>     Set e2m1 dequantisation algorithm (default: tbl on aarch64, lut on other platforms)
+      --e4m3 <lut|bits>         Set e4m3 dequantisation algorithm (default: lut)
+      --dequant <simd|seq>      Set dequantization parallelism    (default: simd)
   -h, --help                    Show this help
 ```
 
 Example:
 ```sh
-zig-out/bin/nvfp4 nvfp4/model.safetensors -o model_bf16.safetensors -d bf16
+zig-out/bin/nvfp4 nvfp4/model.safetensors -o model_bf16.safetensors -d bf16 --e2m1=lut
 ```
 
 The nvfp4 groups of `<name>.weight_packed`, `<name>.weight_scale` and `<name>.weight_global_scale` tensors are converted into a single `<name>.weight` tensor.
