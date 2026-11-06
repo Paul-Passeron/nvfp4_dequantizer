@@ -8,6 +8,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/st.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     const nvfp4 = b.createModule(.{
         .root_source_file = b.path("src/nvfp4.zig"),
@@ -30,6 +31,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/benchmark.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
         .imports = &.{
             .{ .module = nvfp4, .name = "nvfp4" },
             .{ .module = st, .name = "st" },
